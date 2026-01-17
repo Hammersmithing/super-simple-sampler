@@ -95,10 +95,14 @@ private:
     // Custom MIDI handling for proper velocity/round-robin selection
     void handleNoteOn(int midiChannel, int midiNote, float velocity);
     void handleNoteOff(int midiChannel, int midiNote, float velocity);
+    void handleSustainPedal(bool isDown);
     std::vector<int> findMatchingZones(int midiNote, int velocity);
 
     // Random number generator for round-robin selection
     std::mt19937 randomGenerator{std::random_device{}()};
+
+    // Sustain pedal state
+    bool sustainPedalDown = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SuperSimpleSamplerProcessor)
 };

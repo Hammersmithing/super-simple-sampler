@@ -171,6 +171,11 @@ void SuperSimpleSamplerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             handleNoteOff(message.getChannel(), message.getNoteNumber(),
                          message.getFloatVelocity());
         }
+        else if (message.isController() && message.getControllerNumber() == 64)
+        {
+            // Sustain pedal (CC 64)
+            handleSustainPedal(message.getControllerValue() >= 64);
+        }
         else
         {
             // Pass through other MIDI messages (pitch bend, CC, etc.)
@@ -328,6 +333,8 @@ std::vector<int> SuperSimpleSamplerProcessor::findMatchingZones(int midiNote, in
 
 void SuperSimpleSamplerProcessor::handleNoteOn(int midiChannel, int midiNote, float velocity)
 {
+    juce::ignoreUnused(midiChannel);
+
     int intVelocity = static_cast<int>(velocity * 127.0f);
 
     // Find all zones that match this note AND velocity
@@ -345,31 +352,54 @@ void SuperSimpleSamplerProcessor::handleNoteOn(int midiChannel, int midiNote, fl
     // Find a free voice and start the note with the selected sound
     for (int i = 0; i < sampler.getNumVoices(); ++i)
     {
-        auto* voice = sampler.getVoice(i);
-        if (!voice->isVoiceActive())
+        if (auto* voice = dynamic_cast<SampleZoneVoice*>(sampler.getVoice(i)))
         {
-            voice->startNote(midiNote, velocity, selectedSound, 0);
-            return;
+            if (!voice->isPlaying())
+            {
+                voice->startNote(midiNote, velocity, selectedSound, 0);
+                return;
+            }
         }
     }
 
-    // If no free voice, steal the oldest one
-    auto* voice = sampler.getVoice(0);
-    voice->stopNote(0.0f, false);
-    voice->startNote(midiNote, velocity, selectedSound, 0);
+    // If no free voice, steal the first one (voice stealing)
+    if (auto* voice = dynamic_cast<SampleZoneVoice*>(sampler.getVoice(0)))
+    {
+        voice->stopNote(0.0f, false);
+        voice->startNote(midiNote, velocity, selectedSound, 0);
+    }
 }
 
 void SuperSimpleSamplerProcessor::handleNoteOff(int midiChannel, int midiNote, float velocity)
 {
-    juce::ignoreUnused(midiChannel);
+    juce::ignoreUnused(midiChannel, velocity);
 
-    // Stop all voices playing this note
+    // Release all voices playing this note (respecting sustain pedal)
     for (int i = 0; i < sampler.getNumVoices(); ++i)
     {
-        auto* voice = sampler.getVoice(i);
-        if (voice->isVoiceActive() && voice->getCurrentlyPlayingNote() == midiNote)
+        if (auto* voice = dynamic_cast<SampleZoneVoice*>(sampler.getVoice(i)))
         {
-            voice->stopNote(velocity, true);
+            if (voice->isPlaying() && voice->getPlayingNote() == midiNote)
+            {
+                voice->noteReleasedWithPedal(sustainPedalDown);
+            }
+        }
+    }
+}
+
+void SuperSimpleSamplerProcessor::handleSustainPedal(bool isDown)
+{
+    sustainPedalDown = isDown;
+
+    if (!isDown)
+    {
+        // Pedal released - release all sustained notes
+        for (int i = 0; i < sampler.getNumVoices(); ++i)
+        {
+            if (auto* voice = dynamic_cast<SampleZoneVoice*>(sampler.getVoice(i)))
+            {
+                voice->setSustainPedal(false);
+            }
         }
     }
 }

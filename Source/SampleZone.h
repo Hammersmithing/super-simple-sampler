@@ -63,6 +63,34 @@ public:
         return dynamic_cast<SampleZoneSound*>(sound) != nullptr;
     }
 
+    // Check if this voice is currently playing audio
+    bool isPlaying() const
+    {
+        return playing;
+    }
+
+    // Get the note this voice is playing (-1 if not playing)
+    int getPlayingNote() const
+    {
+        return playingNote;
+    }
+
+    // Check if this voice is being sustained by the pedal
+    bool isSustainedByPedal() const
+    {
+        return sustainedByPedal;
+    }
+
+    void setSustainPedal(bool isDown)
+    {
+        if (!isDown && sustainedByPedal)
+        {
+            // Pedal released - stop the sustained note
+            sustainedByPedal = false;
+            adsr.noteOff();
+        }
+    }
+
     void startNote(int midiNoteNumber, float velocity, juce::SynthesiserSound* sound, int currentPitchWheelPosition) override
     {
         juce::ignoreUnused(currentPitchWheelPosition);
@@ -74,6 +102,9 @@ public:
             // Zone selection (including velocity matching) is done before startNote is called
             currentZone = &zone;
             samplePosition = 0.0;
+            playing = true;
+            playingNote = midiNoteNumber;
+            sustainedByPedal = false;
 
             // Calculate pitch ratio based on root note
             double frequencyOfNote = juce::MidiMessage::getMidiNoteInHertz(midiNoteNumber);
@@ -99,6 +130,24 @@ public:
         {
             clearCurrentNote();
             adsr.reset();
+            playing = false;
+            playingNote = -1;
+            sustainedByPedal = false;
+        }
+    }
+
+    // Called when key is released but sustain pedal may be down
+    void noteReleasedWithPedal(bool pedalDown)
+    {
+        if (pedalDown)
+        {
+            // Sustain pedal is down - keep the note ringing
+            sustainedByPedal = true;
+        }
+        else
+        {
+            // No pedal - release normally
+            adsr.noteOff();
         }
     }
 
@@ -117,7 +166,7 @@ public:
 
     void renderNextBlock(juce::AudioBuffer<float>& outputBuffer, int startSample, int numSamples) override
     {
-        if (currentZone == nullptr || !currentZone->isValid())
+        if (!playing || currentZone == nullptr || !currentZone->isValid())
             return;
 
         const auto& audioData = currentZone->audioData;
@@ -130,6 +179,9 @@ public:
             {
                 clearCurrentNote();
                 adsr.reset();
+                playing = false;
+                playingNote = -1;
+                sustainedByPedal = false;
                 break;
             }
 
@@ -138,6 +190,9 @@ public:
             if (!adsr.isActive())
             {
                 clearCurrentNote();
+                playing = false;
+                playingNote = -1;
+                sustainedByPedal = false;
                 break;
             }
 
@@ -180,4 +235,8 @@ private:
     double pitchRatio = 1.0;
     float level = 0.0f;
     juce::ADSR adsr;
+
+    bool playing = false;
+    int playingNote = -1;
+    bool sustainedByPedal = false;
 };
