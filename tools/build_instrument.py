@@ -5,13 +5,13 @@ Super Simple Sampler - Instrument Builder
 Scans a folder of audio samples and generates an instrument.sss XML file.
 
 Naming convention:
-    {Note}_vel{Value}_rr{Number}_{OptionalSuffix}.wav
+    {Note}_{RR}.wav
 
 Examples:
-    C#2_vel127_rr8.wav
-    C#2_vel127_rr8_brightmic.wav
-    Db3_vel64_rr1_room.wav
-    A4_vel32_rr2.wav
+    C3_01.wav
+    C#3_02.wav
+    Db3_01.wav
+    F#4_03.wav
 
 Usage:
     python build_instrument.py /path/to/samples --name "My Instrument" --author "Your Name"
@@ -71,24 +71,22 @@ def parse_filename(filename: str) -> Optional[Dict]:
     """
     Parse a sample filename.
 
-    Expected format: {Note}_vel{Value}_rr{Number}_{OptionalSuffix}.ext
+    Expected format: {Note}_{RR}.ext
 
-    Returns dict with: note, midi_note, velocity, round_robin, suffix
+    Returns dict with: note, midi_note, round_robin
     """
     # Remove extension
     name = Path(filename).stem
 
-    # Pattern: Note_velXXX_rrX_optional_suffix
-    pattern = r'^([A-Ga-g][#b]?-?\d+)_vel(\d+)_rr(\d+)(?:_(.+))?$'
+    # Pattern: Note_RR (e.g., C3_01, F#4_02, Db3_01)
+    pattern = r'^([A-Ga-g][#b]?-?\d+)_(\d+)$'
     match = re.match(pattern, name, re.IGNORECASE)
 
     if not match:
         return None
 
     note_str = match.group(1)
-    velocity = int(match.group(2))
-    round_robin = int(match.group(3))
-    suffix = match.group(4) or ""
+    round_robin = int(match.group(2))
 
     midi_note = note_to_midi(note_str)
     if midi_note is None:
@@ -97,9 +95,7 @@ def parse_filename(filename: str) -> Optional[Dict]:
     return {
         'note': note_str,
         'midi_note': midi_note,
-        'velocity': velocity,
         'round_robin': round_robin,
-        'suffix': suffix,
         'filename': filename
     }
 
@@ -186,20 +182,18 @@ def generate_xml(samples: List[Dict], name: str, author: str, samples_folder: st
     if not samples:
         raise ValueError("No valid samples found!")
 
-    # Group samples by note and velocity
-    # Structure: {midi_note: {velocity: [samples]}}
-    grouped = defaultdict(lambda: defaultdict(list))
+    # Group samples by note
+    # Structure: {midi_note: [samples]}
+    grouped = defaultdict(list)
 
     for sample in samples:
-        grouped[sample['midi_note']][sample['velocity']].append(sample)
+        grouped[sample['midi_note']].append(sample)
 
-    # Get all unique notes and velocities
+    # Get all unique notes
     all_notes = sorted(grouped.keys())
-    all_velocities = sorted(set(s['velocity'] for s in samples))
 
-    # Calculate ranges
+    # Calculate key ranges
     note_ranges = calculate_note_ranges(all_notes)
-    vel_ranges = calculate_velocity_ranges(all_velocities)
 
     # Build XML
     lines = [
@@ -216,36 +210,31 @@ def generate_xml(samples: List[Dict], name: str, author: str, samples_folder: st
     # Add comment with stats
     lines.append(f'    <!-- Generated from {len(samples)} sample files -->')
     lines.append(f'    <!-- Notes: {midi_to_note(all_notes[0])} - {midi_to_note(all_notes[-1])} ({len(all_notes)} zones) -->')
-    lines.append(f'    <!-- Velocity layers: {len(all_velocities)} -->')
-    lines.append(f'    <!-- Round robins per zone: varies -->')
     lines.append('')
 
     # Generate sample entries
     for midi_note in all_notes:
         note_low, note_high = note_ranges[midi_note]
 
-        for velocity in sorted(grouped[midi_note].keys()):
-            vel_low, vel_high = vel_ranges[velocity]
+        rr_samples = grouped[midi_note]
+        # Sort by round robin number
+        rr_samples.sort(key=lambda x: x['round_robin'])
 
-            rr_samples = grouped[midi_note][velocity]
-            # Sort by round robin number
-            rr_samples.sort(key=lambda x: x['round_robin'])
+        # Add comment for this zone
+        note_name = midi_to_note(midi_note)
+        lines.append(f'    <!-- {note_name} ({len(rr_samples)} round robins) -->')
 
-            # Add comment for this zone
-            note_name = midi_to_note(midi_note)
-            lines.append(f'    <!-- {note_name} vel{velocity} ({len(rr_samples)} round robins) -->')
+        for sample in rr_samples:
+            # Path relative to instrument folder
+            rel_path = sample['path']
 
-            for sample in rr_samples:
-                # Path relative to instrument folder
-                rel_path = sample['path']
+            line = f'    <sample file="{rel_path}" '
+            line += f'rootNote="{midi_note}" '
+            line += f'loNote="{note_low}" hiNote="{note_high}" '
+            line += f'loVel="1" hiVel="127"/>'
+            lines.append(line)
 
-                line = f'    <sample file="{rel_path}" '
-                line += f'rootNote="{midi_note}" '
-                line += f'loNote="{note_low}" hiNote="{note_high}" '
-                line += f'loVel="{vel_low}" hiVel="{vel_high}"/>'
-                lines.append(line)
-
-            lines.append('')
+        lines.append('')
 
     lines.append('  </samples>')
     lines.append('</SuperSimpleSampler>')
@@ -259,12 +248,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Naming convention:
-    {Note}_vel{Value}_rr{Number}_{OptionalSuffix}.wav
+    {Note}_{RR}.wav
 
 Examples:
-    C#2_vel127_rr1.wav
-    C#2_vel127_rr1_bright.wav
-    Db3_vel64_rr2_room.wav
+    C3_01.wav
+    C#3_02.wav
+    Db3_01.wav
+    F#4_03.wav
         """
     )
 
@@ -294,8 +284,8 @@ Examples:
 
     if not samples:
         print("Error: No valid sample files found!")
-        print("Expected naming format: {Note}_vel{Value}_rr{Number}_{OptionalSuffix}.wav")
-        print("Example: C#2_vel127_rr1.wav or A3_vel64_rr2_bright.wav")
+        print("Expected naming format: {Note}_{RR}.wav")
+        print("Example: C3_01.wav or F#4_02.wav")
         return 1
 
     print(f"Found {len(samples)} valid samples")
@@ -315,12 +305,10 @@ Examples:
 
     # Summary
     all_notes = sorted(set(s['midi_note'] for s in samples))
-    all_velocities = sorted(set(s['velocity'] for s in samples))
 
     print(f"\nInstrument Summary:")
     print(f"  Name: {args.name}")
     print(f"  Notes: {midi_to_note(all_notes[0])} - {midi_to_note(all_notes[-1])} ({len(all_notes)} zones)")
-    print(f"  Velocity layers: {all_velocities}")
     print(f"  Total samples: {len(samples)}")
 
     return 0
