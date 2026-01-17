@@ -71,15 +71,15 @@ def parse_filename(filename: str) -> Optional[Dict]:
     """
     Parse a sample filename.
 
-    Expected format: {Note}_{Velocity}_{RR}.ext
+    Expected format: {Note}_{Velocity}_{RR}_{OptionalSuffix}.ext
 
     Returns dict with: note, midi_note, velocity, round_robin
     """
     # Remove extension
     name = Path(filename).stem
 
-    # Pattern: Note_Velocity_RR (e.g., C3_033_01, F#4_127_02, Db3_064_01)
-    pattern = r'^([A-Ga-g][#b]?-?\d+)_(\d+)_(\d+)$'
+    # Pattern: Note_Velocity_RR with optional _suffix (e.g., C3_033_01, F#4_127_02_piano)
+    pattern = r'^([A-Ga-g][#b]?-?\d+)_(\d+)_(\d+)(?:_.*)?$'
     match = re.match(pattern, name, re.IGNORECASE)
 
     if not match:
