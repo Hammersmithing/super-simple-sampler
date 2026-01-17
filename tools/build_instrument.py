@@ -144,15 +144,16 @@ def calculate_note_ranges(midi_notes: List[int]) -> Dict[int, Tuple[int, int]]:
     Calculate key ranges for a set of root notes.
 
     Each sample covers from (previous root + 1) up to its own root note.
-    This means samples are only pitched DOWN, never up (except the highest
-    sample which extends to 127).
+    Samples are ONLY pitched DOWN, never up. Notes above the highest
+    sample will not trigger any sound.
 
     Returns dict mapping midi note to (low_note, high_note) tuple.
     """
     midi_notes = sorted(set(midi_notes))
 
     if len(midi_notes) == 1:
-        return {midi_notes[0]: (0, 127)}
+        # Single sample covers all notes at or below it (pitched down only)
+        return {midi_notes[0]: (0, midi_notes[0])}
 
     ranges = {}
     for i, note in enumerate(midi_notes):
@@ -162,12 +163,8 @@ def calculate_note_ranges(midi_notes: List[int]) -> Dict[int, Tuple[int, int]]:
             # Start from previous note + 1
             low = midi_notes[i-1] + 1
 
-        if i == len(midi_notes) - 1:
-            # Highest sample extends to cover remaining keys
-            high = 127
-        else:
-            # End at this note's root (no pitching up)
-            high = note
+        # End at this note's root (no pitching up ever)
+        high = note
 
         ranges[note] = (low, high)
 
