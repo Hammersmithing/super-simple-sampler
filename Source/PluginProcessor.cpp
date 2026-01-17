@@ -267,8 +267,8 @@ void SuperSimpleSamplerProcessor::loadInstrumentFromFile(const juce::File& defin
 {
     currentInstrument = instrumentLoader.loadInstrument(definitionFile);
 
-    // Reset round-robin counters for new instrument
-    roundRobinCounters.clear();
+    // Reset round-robin counter for new instrument
+    roundRobinCounter = 0;
 
     if (currentInstrument.isValid())
     {
@@ -353,13 +353,9 @@ void SuperSimpleSamplerProcessor::handleNoteOn(int midiChannel, int midiNote, fl
     if (matchingZones.empty())
         return;
 
-    // True round-robin: cycle through matching zones sequentially
-    int rrKey = (midiNote << 8) | intVelocity;
-    int& rrIndex = roundRobinCounters[rrKey];
-
-    // Get current RR sample and advance counter
-    int selectedIndex = matchingZones[static_cast<size_t>(rrIndex % matchingZones.size())];
-    rrIndex = (rrIndex + 1) % static_cast<int>(matchingZones.size());
+    // Global round-robin: cycle through samples in performance order
+    int selectedIndex = matchingZones[static_cast<size_t>(roundRobinCounter % matchingZones.size())];
+    roundRobinCounter++;
 
     auto* selectedSound = sampler.getSound(selectedIndex).get();
 

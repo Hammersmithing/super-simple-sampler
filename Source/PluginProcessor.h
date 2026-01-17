@@ -2,7 +2,6 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_formats/juce_audio_formats.h>
-#include <map>
 #include "SampleZone.h"
 #include "InstrumentLoader.h"
 
@@ -99,8 +98,8 @@ private:
     void handleSustainPedal(bool isDown);
     std::vector<int> findMatchingZones(int midiNote, int velocity);
 
-    // Round-robin counters: key = (note << 8) | velocity, value = current RR index
-    std::map<int, int> roundRobinCounters;
+    // Global round-robin counter - increments with every note played
+    int roundRobinCounter = 0;
 
     // Sustain pedal state
     bool sustainPedalDown = false;
