@@ -267,8 +267,8 @@ void SuperSimpleSamplerProcessor::loadInstrumentFromFile(const juce::File& defin
 {
     currentInstrument = instrumentLoader.loadInstrument(definitionFile);
 
-    // Reset round-robin counter for new instrument
-    roundRobinCounter = 0;
+    // Reset round-robin counters for new instrument
+    roundRobinCounters.clear();
 
     if (currentInstrument.isValid())
     {
@@ -353,11 +353,19 @@ void SuperSimpleSamplerProcessor::handleNoteOn(int midiChannel, int midiNote, fl
     if (matchingZones.empty())
         return;
 
-    // Global round-robin: cycle through samples in performance order
-    int selectedIndex = matchingZones[static_cast<size_t>(roundRobinCounter % matchingZones.size())];
-    roundRobinCounter++;
+    // Per-note round-robin (like SFZ seq_position)
+    int& rrCounter = roundRobinCounters[midiNote];
+    int rrIndex = rrCounter % static_cast<int>(matchingZones.size());
+    int selectedIndex = matchingZones[static_cast<size_t>(rrIndex)];
+    rrCounter++;
 
     auto* selectedSound = sampler.getSound(selectedIndex).get();
+
+    // Store last played sample name for debug display
+    if (auto* zoneSound = dynamic_cast<SampleZoneSound*>(selectedSound))
+    {
+        lastPlayedSample = zoneSound->getZone().name + " (RR" + juce::String(rrIndex + 1) + "/" + juce::String(matchingZones.size()) + ")";
+    }
 
     // Get current polyphony setting
     int maxVoices = static_cast<int>(polyphonyParam->load());

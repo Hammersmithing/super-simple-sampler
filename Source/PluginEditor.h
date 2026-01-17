@@ -56,7 +56,8 @@ private:
 };
 
 class SuperSimpleSamplerEditor : public juce::AudioProcessorEditor,
-                                  public SuperSimpleSamplerProcessor::Listener
+                                  public SuperSimpleSamplerProcessor::Listener,
+                                  public juce::Timer
 {
 public:
     explicit SuperSimpleSamplerEditor(SuperSimpleSamplerProcessor&);
@@ -64,6 +65,7 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    void timerCallback() override;
 
     // Processor listener
     void instrumentChanged() override;
@@ -80,6 +82,7 @@ private:
 
     juce::Label instrumentNameLabel;
     juce::Label instrumentAuthorLabel;
+    juce::Label lastPlayedLabel;
 
     juce::Slider attackSlider;
     juce::Slider decaySlider;

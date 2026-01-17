@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <map>
 #include "SampleZone.h"
 #include "InstrumentLoader.h"
 
@@ -55,6 +56,9 @@ public:
     void setSelectedZoneIndex(int index) { selectedZoneIndex = index; }
     const SampleZone* getSelectedZone() const;
 
+    // Round-robin debug info
+    juce::String getLastPlayedSample() const { return lastPlayedSample; }
+
     juce::AudioProcessorValueTreeState& getParameters() { return parameters; }
 
     // Listener for UI updates
@@ -98,8 +102,9 @@ private:
     void handleSustainPedal(bool isDown);
     std::vector<int> findMatchingZones(int midiNote, int velocity);
 
-    // Global round-robin counter - increments with every note played
-    int roundRobinCounter = 0;
+    // Per-note round-robin counters (like SFZ seq_position)
+    std::map<int, int> roundRobinCounters;  // key = MIDI note, value = current position
+    juce::String lastPlayedSample;
 
     // Sustain pedal state
     bool sustainPedalDown = false;

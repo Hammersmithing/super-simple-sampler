@@ -235,6 +235,16 @@ SuperSimpleSamplerEditor::SuperSimpleSamplerEditor(SuperSimpleSamplerProcessor& 
     instrumentAuthorLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible(instrumentAuthorLabel);
 
+    // Last played sample display (debug)
+    lastPlayedLabel.setFont(juce::FontOptions(12.0f).withStyle("Bold"));
+    lastPlayedLabel.setColour(juce::Label::textColourId, juce::Colours::yellow);
+    lastPlayedLabel.setColour(juce::Label::backgroundColourId, juce::Colour(0xff333333));
+    lastPlayedLabel.setText("Play a note to see RR info", juce::dontSendNotification);
+    addAndMakeVisible(lastPlayedLabel);
+
+    // Start timer to update last played display
+    startTimerHz(30);
+
     // Setup ADSR sliders
     auto setupSlider = [this](juce::Slider& slider, juce::Label& label, const juce::String& labelText)
     {
@@ -279,7 +289,15 @@ SuperSimpleSamplerEditor::SuperSimpleSamplerEditor(SuperSimpleSamplerProcessor& 
 
 SuperSimpleSamplerEditor::~SuperSimpleSamplerEditor()
 {
+    stopTimer();
     processorRef.removeZoneListener(this);
+}
+
+void SuperSimpleSamplerEditor::timerCallback()
+{
+    auto lastPlayed = processorRef.getLastPlayedSample();
+    if (lastPlayed.isNotEmpty())
+        lastPlayedLabel.setText("Last: " + lastPlayed, juce::dontSendNotification);
 }
 
 void SuperSimpleSamplerEditor::paint(juce::Graphics& g)
@@ -328,9 +346,10 @@ void SuperSimpleSamplerEditor::resized()
     auto rightPanel = area;
 
     // Instrument info
-    auto infoArea = rightPanel.removeFromTop(40);
+    auto infoArea = rightPanel.removeFromTop(56);
     instrumentNameLabel.setBounds(infoArea.removeFromTop(20));
-    instrumentAuthorLabel.setBounds(infoArea);
+    instrumentAuthorLabel.setBounds(infoArea.removeFromTop(16));
+    lastPlayedLabel.setBounds(infoArea.removeFromTop(18));
 
     rightPanel.removeFromTop(4);
 
