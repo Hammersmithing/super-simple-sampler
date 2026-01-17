@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <random>
 #include "SampleZone.h"
 #include "InstrumentLoader.h"
 
@@ -90,6 +91,14 @@ private:
     void rebuildSampler();
     void updateADSR();
     void notifyListeners();
+
+    // Custom MIDI handling for proper velocity/round-robin selection
+    void handleNoteOn(int midiChannel, int midiNote, float velocity);
+    void handleNoteOff(int midiChannel, int midiNote, float velocity);
+    std::vector<int> findMatchingZones(int midiNote, int velocity);
+
+    // Random number generator for round-robin selection
+    std::mt19937 randomGenerator{std::random_device{}()};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SuperSimpleSamplerProcessor)
 };

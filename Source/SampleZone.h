@@ -71,14 +71,7 @@ public:
         {
             const auto& zone = zoneSound->getZone();
 
-            // Check velocity range
-            int vel = static_cast<int>(velocity * 127.0f);
-            if (!zone.containsVelocity(vel))
-            {
-                clearCurrentNote();
-                return;
-            }
-
+            // Zone selection (including velocity matching) is done before startNote is called
             currentZone = &zone;
             samplePosition = 0.0;
 

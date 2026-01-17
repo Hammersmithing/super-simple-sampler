@@ -154,7 +154,32 @@ void SuperSimpleSamplerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     updateADSR();
 
-    sampler.renderNextBlock(buffer, midiMessages, 0, buffer.getNumSamples());
+    // Process MIDI with custom handling for proper velocity/round-robin selection
+    juce::MidiBuffer processedMidi;
+
+    for (const auto metadata : midiMessages)
+    {
+        auto message = metadata.getMessage();
+
+        if (message.isNoteOn())
+        {
+            handleNoteOn(message.getChannel(), message.getNoteNumber(),
+                        message.getFloatVelocity());
+        }
+        else if (message.isNoteOff())
+        {
+            handleNoteOff(message.getChannel(), message.getNoteNumber(),
+                         message.getFloatVelocity());
+        }
+        else
+        {
+            // Pass through other MIDI messages (pitch bend, CC, etc.)
+            processedMidi.addEvent(message, metadata.samplePosition);
+        }
+    }
+
+    // Render audio (note on/off already handled above)
+    sampler.renderNextBlock(buffer, processedMidi, 0, buffer.getNumSamples());
 
     // Apply gain
     float gain = gainParam->load();
@@ -280,6 +305,73 @@ void SuperSimpleSamplerProcessor::rebuildSampler()
 void SuperSimpleSamplerProcessor::notifyListeners()
 {
     listeners.call([](Listener& l) { l.instrumentChanged(); });
+}
+
+std::vector<int> SuperSimpleSamplerProcessor::findMatchingZones(int midiNote, int velocity)
+{
+    std::vector<int> matches;
+
+    for (int i = 0; i < sampler.getNumSounds(); ++i)
+    {
+        if (auto* sound = dynamic_cast<SampleZoneSound*>(sampler.getSound(i).get()))
+        {
+            const auto& zone = sound->getZone();
+            if (zone.matches(midiNote, velocity))
+            {
+                matches.push_back(i);
+            }
+        }
+    }
+
+    return matches;
+}
+
+void SuperSimpleSamplerProcessor::handleNoteOn(int midiChannel, int midiNote, float velocity)
+{
+    int intVelocity = static_cast<int>(velocity * 127.0f);
+
+    // Find all zones that match this note AND velocity
+    auto matchingZones = findMatchingZones(midiNote, intVelocity);
+
+    if (matchingZones.empty())
+        return;
+
+    // Randomly select one zone (round-robin)
+    std::uniform_int_distribution<int> dist(0, static_cast<int>(matchingZones.size()) - 1);
+    int selectedIndex = matchingZones[static_cast<size_t>(dist(randomGenerator))];
+
+    auto* selectedSound = sampler.getSound(selectedIndex).get();
+
+    // Find a free voice and start the note with the selected sound
+    for (int i = 0; i < sampler.getNumVoices(); ++i)
+    {
+        auto* voice = sampler.getVoice(i);
+        if (!voice->isVoiceActive())
+        {
+            voice->startNote(midiNote, velocity, selectedSound, 0);
+            return;
+        }
+    }
+
+    // If no free voice, steal the oldest one
+    auto* voice = sampler.getVoice(0);
+    voice->stopNote(0.0f, false);
+    voice->startNote(midiNote, velocity, selectedSound, 0);
+}
+
+void SuperSimpleSamplerProcessor::handleNoteOff(int midiChannel, int midiNote, float velocity)
+{
+    juce::ignoreUnused(midiChannel);
+
+    // Stop all voices playing this note
+    for (int i = 0; i < sampler.getNumVoices(); ++i)
+    {
+        auto* voice = sampler.getVoice(i);
+        if (voice->isVoiceActive() && voice->getCurrentlyPlayingNote() == midiNote)
+        {
+            voice->stopNote(velocity, true);
+        }
+    }
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
