@@ -1,5 +1,14 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <fstream>
+
+// Debug log file - tail this in terminal: tail -f ~/Desktop/sampler_debug.log
+static void logDebug(const juce::String& message)
+{
+    static juce::File logFile(juce::File::getSpecialLocation(juce::File::userDesktopDirectory)
+                              .getChildFile("sampler_debug.log"));
+    logFile.appendText(message + "\n");
+}
 
 static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
@@ -349,7 +358,7 @@ void SuperSimpleSamplerProcessor::handleNoteOn(int midiChannel, int midiNote, fl
 
     if (matchingZones.empty())
     {
-        DBG("No matching zones for note " << midiNote << " velocity " << intVelocity);
+        logDebug("No matching zones for note " + juce::String(midiNote) + " velocity " + juce::String(intVelocity));
         return;
     }
 
@@ -363,10 +372,10 @@ void SuperSimpleSamplerProcessor::handleNoteOn(int midiChannel, int midiNote, fl
     if (auto* zoneSound = dynamic_cast<SampleZoneSound*>(selectedSound))
     {
         const auto& zone = zoneSound->getZone();
-        DBG("Note " << midiNote << " vel " << intVelocity
-            << " -> " << zone.name
-            << " (velRange " << zone.lowVelocity << "-" << zone.highVelocity
-            << ", " << matchingZones.size() << " RR options)");
+        logDebug("Note " + juce::String(midiNote) + " vel " + juce::String(intVelocity)
+            + " -> " + zone.name
+            + " (velRange " + juce::String(zone.lowVelocity) + "-" + juce::String(zone.highVelocity)
+            + ", " + juce::String(matchingZones.size()) + " RR options)");
     }
 
     // Get current polyphony setting
