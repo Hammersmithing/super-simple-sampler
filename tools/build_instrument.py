@@ -106,6 +106,16 @@ def calculate_velocity_ranges(velocities: List[int]) -> Dict[int, Tuple[int, int
     """
     Calculate velocity ranges for a set of velocity values.
 
+    The velocity value in the filename is the CEILING (highest velocity) for that layer.
+    Range goes from (previous velocity + 1) up to this velocity.
+
+    Example: velocities [1, 33, 64, 96, 127] becomes:
+        vel1:   1-1
+        vel33:  2-33
+        vel64:  34-64
+        vel96:  65-96
+        vel127: 97-127
+
     Returns dict mapping velocity value to (low_vel, high_vel) tuple.
     """
     velocities = sorted(set(velocities))
@@ -118,14 +128,11 @@ def calculate_velocity_ranges(velocities: List[int]) -> Dict[int, Tuple[int, int
         if i == 0:
             low = 1
         else:
-            # Midpoint between this and previous velocity
-            low = (velocities[i-1] + vel) // 2 + 1
+            # Start from previous velocity + 1
+            low = velocities[i-1] + 1
 
-        if i == len(velocities) - 1:
-            high = 127
-        else:
-            # Midpoint between this and next velocity
-            high = (vel + velocities[i+1]) // 2
+        # High is always this velocity value (it's the ceiling)
+        high = vel
 
         ranges[vel] = (low, high)
 
