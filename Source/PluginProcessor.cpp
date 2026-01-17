@@ -267,6 +267,9 @@ void SuperSimpleSamplerProcessor::loadInstrumentFromFile(const juce::File& defin
 {
     currentInstrument = instrumentLoader.loadInstrument(definitionFile);
 
+    // Reset round-robin counters for new instrument
+    roundRobinCounters.clear();
+
     if (currentInstrument.isValid())
     {
         selectedZoneIndex = 0;
@@ -350,9 +353,13 @@ void SuperSimpleSamplerProcessor::handleNoteOn(int midiChannel, int midiNote, fl
     if (matchingZones.empty())
         return;
 
-    // Randomly select one zone (round-robin)
-    std::uniform_int_distribution<int> dist(0, static_cast<int>(matchingZones.size()) - 1);
-    int selectedIndex = matchingZones[static_cast<size_t>(dist(randomGenerator))];
+    // True round-robin: cycle through matching zones sequentially
+    int rrKey = (midiNote << 8) | intVelocity;
+    int& rrIndex = roundRobinCounters[rrKey];
+
+    // Get current RR sample and advance counter
+    int selectedIndex = matchingZones[static_cast<size_t>(rrIndex % matchingZones.size())];
+    rrIndex = (rrIndex + 1) % static_cast<int>(matchingZones.size());
 
     auto* selectedSound = sampler.getSound(selectedIndex).get();
 

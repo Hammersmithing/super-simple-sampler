@@ -2,7 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_formats/juce_audio_formats.h>
-#include <random>
+#include <map>
 #include "SampleZone.h"
 #include "InstrumentLoader.h"
 
@@ -99,8 +99,8 @@ private:
     void handleSustainPedal(bool isDown);
     std::vector<int> findMatchingZones(int midiNote, int velocity);
 
-    // Random number generator for round-robin selection
-    std::mt19937 randomGenerator{std::random_device{}()};
+    // Round-robin counters: key = (note << 8) | velocity, value = current RR index
+    std::map<int, int> roundRobinCounters;
 
     // Sustain pedal state
     bool sustainPedalDown = false;
