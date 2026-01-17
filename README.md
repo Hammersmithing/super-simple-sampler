@@ -17,42 +17,60 @@ Inspired by Decent Sampler's approach, instruments will be defined using a **hum
 - **Package format** - Instruments are distributed as a single file (zipped XML + samples) for easy sharing.
 - **Decent Sampler compatibility** - Long-term goal to import `.dspreset` files so existing libraries can be used.
 
-### Example Instrument Definition (Target Format)
+## Current Features
+
+- **XML-based instrument format** (.sss files)
+- **Multi-sample support** with key range and velocity layer mapping
+- **16-voice polyphony** with pitch interpolation
+- **ADSR envelope** (Attack, Decay, Sustain, Release)
+- **Gain control**
+- **Instrument browser** - scans ~/Documents/Super Simple Sampler/Instruments/
+- **Waveform display** for selected samples
+
+## Creating Instruments
+
+### Folder Structure
+```
+~/Documents/Super Simple Sampler/Instruments/
+└── MyPiano/
+    ├── instrument.sss      <- XML definition
+    └── samples/
+        ├── C3_soft.wav
+        ├── C3_medium.wav
+        └── C3_hard.wav
+```
+
+### instrument.sss Format
 ```xml
+<?xml version="1.0" encoding="UTF-8"?>
 <SuperSimpleSampler version="1.0">
   <meta>
     <name>My Piano</name>
-    <author>ALDEN HAMMERSMITH</author>
+    <author>Your Name</author>
   </meta>
 
-  <ui background="wood_panel.png">
-    <knob id="cutoff" x="50" y="100" param="filter.cutoff"/>
-    <knob id="resonance" x="120" y="100" param="filter.resonance"/>
-  </ui>
+  <samples>
+    <!-- Velocity layers for C3 zone -->
+    <sample file="samples/C3_soft.wav" rootNote="48" loNote="36" hiNote="59" loVel="1" hiVel="50"/>
+    <sample file="samples/C3_hard.wav" rootNote="48" loNote="36" hiNote="59" loVel="51" hiVel="127"/>
 
-  <groups>
-    <group name="sustain" attack="0.01" release="0.3">
-      <sample path="samples/C3_pp.wav" rootNote="48" loNote="36" hiNote="54" loVel="1" hiVel="40"/>
-      <sample path="samples/C3_mf.wav" rootNote="48" loNote="36" hiNote="54" loVel="41" hiVel="90"/>
-      <sample path="samples/C3_ff.wav" rootNote="48" loNote="36" hiNote="54" loVel="91" hiVel="127"/>
-    </group>
-  </groups>
-
-  <effects>
-    <filter type="lowpass" cutoff="8000" resonance="0.5"/>
-    <reverb mix="0.2" size="0.6"/>
-  </effects>
-
-  <modulation>
-    <route source="velocity" dest="filter.cutoff" amount="0.4"/>
-    <route source="modwheel" dest="lfo1.amount" amount="1.0"/>
-  </modulation>
-
-  <script src="scripts/custom_behavior.lua"/>
+    <!-- Higher zone -->
+    <sample file="samples/C5.wav" rootNote="72" loNote="60" hiNote="84" loVel="1" hiVel="127"/>
+  </samples>
 </SuperSimpleSampler>
 ```
 
-This approach empowers instrument developers to build sophisticated sample libraries without needing to compile code.
+### Sample Attributes
+| Attribute | Description | Default |
+|-----------|-------------|---------|
+| `file` | Path to audio file (relative to instrument folder) | Required |
+| `rootNote` | MIDI note where sample plays at original pitch | 60 (C4) |
+| `loNote` | Lowest MIDI note that triggers this sample | 0 |
+| `hiNote` | Highest MIDI note that triggers this sample | 127 |
+| `loVel` | Lowest velocity that triggers this sample | 1 |
+| `hiVel` | Highest velocity that triggers this sample | 127 |
+
+This approach empowers instrument developers to build sample libraries with just a text editor.
 
 ## Long-Term Goals
 
@@ -101,19 +119,19 @@ This approach empowers instrument developers to build sophisticated sample libra
 
 ## Development Roadmap
 
-### Phase 1: Foundation (Current)
-- [ ] Basic single-sample playback
-- [ ] MIDI note triggering with pitch shifting
-- [ ] Simple ADSR envelope
-- [ ] Basic UI with waveform display
+### Phase 1: Foundation ✅
+- [x] Basic single-sample playback
+- [x] MIDI note triggering with pitch shifting
+- [x] Simple ADSR envelope
+- [x] Basic UI with waveform display
 
-### Phase 2: Multi-Sample Support
-- [ ] Load multiple samples
-- [ ] Key range mapping
-- [ ] Velocity layer support
-- [ ] Basic sample editor
+### Phase 2: Multi-Sample Support ✅
+- [x] Load multiple samples
+- [x] Key range mapping
+- [x] Velocity layer support
+- [x] XML-based instrument format (moved from Phase 5)
 
-### Phase 3: Sound Design Basics
+### Phase 3: Sound Design Basics (Current)
 - [ ] Filter section
 - [ ] Additional envelopes
 - [ ] Single LFO
@@ -125,12 +143,11 @@ This approach empowers instrument developers to build sophisticated sample libra
 - [ ] Multiple LFOs
 - [ ] Key/velocity tracking
 
-### Phase 5: Instrument Format
-- [ ] Define XML instrument format (.sss files)
-- [ ] XML parser for loading instruments
+### Phase 5: Advanced Instrument Format
+- [x] Define XML instrument format (.sss files)
+- [x] XML parser for loading instruments
+- [x] Instrument browser
 - [ ] Package format (.ssslib - zipped XML + samples)
-- [ ] Save/load instruments
-- [ ] Preset browser
 - [ ] Import Decent Sampler .dspreset format
 
 ### Phase 6: Scripting
