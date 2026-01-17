@@ -63,7 +63,8 @@ SuperSimpleSamplerProcessor::SuperSimpleSamplerProcessor()
         .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, juce::Identifier("SuperSimpleSampler"), createParameterLayout())
 {
-    formatManager.registerBasicFormats();
+    // Ensure instruments folder exists
+    InstrumentLoader::ensureInstrumentsFolderExists();
 
     // Add voices to the sampler (polyphony)
     for (int i = 0; i < 16; ++i)
@@ -74,6 +75,9 @@ SuperSimpleSamplerProcessor::SuperSimpleSamplerProcessor()
     sustainParam = parameters.getRawParameterValue("sustain");
     releaseParam = parameters.getRawParameterValue("release");
     gainParam = parameters.getRawParameterValue("gain");
+
+    // Initial scan for instruments
+    refreshInstrumentList();
 }
 
 SuperSimpleSamplerProcessor::~SuperSimpleSamplerProcessor()
@@ -167,6 +171,15 @@ juce::AudioProcessorEditor* SuperSimpleSamplerProcessor::createEditor()
 void SuperSimpleSamplerProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     auto state = parameters.copyState();
+
+    // Store current instrument path
+    if (currentInstrument.isValid())
+    {
+        state.setProperty("instrumentPath",
+                          currentInstrument.info.definitionFile.getFullPathName(),
+                          nullptr);
+    }
+
     std::unique_ptr<juce::XmlElement> xml(state.createXml());
     copyXmlToBinary(*xml, destData);
 }
@@ -175,91 +188,74 @@ void SuperSimpleSamplerProcessor::setStateInformation(const void* data, int size
 {
     std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
     if (xmlState.get() != nullptr)
+    {
         if (xmlState->hasTagName(parameters.state.getType()))
-            parameters.replaceState(juce::ValueTree::fromXml(*xmlState));
-}
+        {
+            auto state = juce::ValueTree::fromXml(*xmlState);
+            parameters.replaceState(state);
 
-int SuperSimpleSamplerProcessor::addSampleZone(const juce::File& file)
-{
-    // Default: map to full keyboard and velocity range, root note = middle C
-    return addSampleZone(file, 0, 127, 60, 1, 127);
-}
-
-int SuperSimpleSamplerProcessor::addSampleZone(const juce::File& file, int lowNote, int highNote,
-                                                int rootNote, int lowVel, int highVel)
-{
-    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
-
-    if (reader == nullptr)
-        return -1;
-
-    SampleZone zone;
-    zone.name = file.getFileNameWithoutExtension();
-    zone.sampleRate = reader->sampleRate;
-    zone.rootNote = rootNote;
-    zone.lowNote = lowNote;
-    zone.highNote = highNote;
-    zone.lowVelocity = lowVel;
-    zone.highVelocity = highVel;
-
-    zone.audioData.setSize(static_cast<int>(reader->numChannels),
-                           static_cast<int>(reader->lengthInSamples));
-    reader->read(&zone.audioData, 0, static_cast<int>(reader->lengthInSamples), 0, true, true);
-
-    sampleZones.push_back(std::move(zone));
-
-    int index = static_cast<int>(sampleZones.size()) - 1;
-    selectedZoneIndex = index;
-
-    rebuildSampler();
-    notifyListeners();
-
-    return index;
-}
-
-void SuperSimpleSamplerProcessor::removeSampleZone(int index)
-{
-    if (index >= 0 && index < static_cast<int>(sampleZones.size()))
-    {
-        sampleZones.erase(sampleZones.begin() + index);
-
-        if (selectedZoneIndex >= static_cast<int>(sampleZones.size()))
-            selectedZoneIndex = static_cast<int>(sampleZones.size()) - 1;
-
-        rebuildSampler();
-        notifyListeners();
+            // Restore instrument
+            auto instrumentPath = state.getProperty("instrumentPath").toString();
+            if (instrumentPath.isNotEmpty())
+            {
+                juce::File instrumentFile(instrumentPath);
+                if (instrumentFile.existsAsFile())
+                {
+                    loadInstrumentFromFile(instrumentFile);
+                }
+            }
+        }
     }
 }
 
-void SuperSimpleSamplerProcessor::clearAllZones()
+std::vector<InstrumentInfo> SuperSimpleSamplerProcessor::getAvailableInstruments()
 {
-    sampleZones.clear();
+    return availableInstruments;
+}
+
+void SuperSimpleSamplerProcessor::refreshInstrumentList()
+{
+    availableInstruments = instrumentLoader.scanForInstruments();
+}
+
+void SuperSimpleSamplerProcessor::loadInstrument(int index)
+{
+    if (index >= 0 && index < static_cast<int>(availableInstruments.size()))
+    {
+        loadInstrumentFromFile(availableInstruments[static_cast<size_t>(index)].definitionFile);
+    }
+}
+
+void SuperSimpleSamplerProcessor::loadInstrumentFromFile(const juce::File& definitionFile)
+{
+    currentInstrument = instrumentLoader.loadInstrument(definitionFile);
+
+    if (currentInstrument.isValid())
+    {
+        selectedZoneIndex = 0;
+        rebuildSampler();
+    }
+    else
+    {
+        selectedZoneIndex = -1;
+        sampler.clearSounds();
+    }
+
+    notifyListeners();
+}
+
+void SuperSimpleSamplerProcessor::unloadInstrument()
+{
+    currentInstrument = LoadedInstrument();
     selectedZoneIndex = -1;
-    rebuildSampler();
+    sampler.clearSounds();
     notifyListeners();
-}
-
-void SuperSimpleSamplerProcessor::updateZoneMapping(int index, int lowNote, int highNote,
-                                                     int rootNote, int lowVel, int highVel)
-{
-    if (index >= 0 && index < static_cast<int>(sampleZones.size()))
-    {
-        auto& zone = sampleZones[static_cast<size_t>(index)];
-        zone.lowNote = lowNote;
-        zone.highNote = highNote;
-        zone.rootNote = rootNote;
-        zone.lowVelocity = lowVel;
-        zone.highVelocity = highVel;
-
-        rebuildSampler();
-        notifyListeners();
-    }
 }
 
 const SampleZone* SuperSimpleSamplerProcessor::getZone(int index) const
 {
-    if (index >= 0 && index < static_cast<int>(sampleZones.size()))
-        return &sampleZones[static_cast<size_t>(index)];
+    if (index >= 0 && index < static_cast<int>(currentInstrument.zones.size()))
+        return &currentInstrument.zones[static_cast<size_t>(index)];
     return nullptr;
 }
 
@@ -272,7 +268,7 @@ void SuperSimpleSamplerProcessor::rebuildSampler()
 {
     sampler.clearSounds();
 
-    for (const auto& zone : sampleZones)
+    for (const auto& zone : currentInstrument.zones)
     {
         if (zone.isValid())
         {
@@ -283,7 +279,7 @@ void SuperSimpleSamplerProcessor::rebuildSampler()
 
 void SuperSimpleSamplerProcessor::notifyListeners()
 {
-    listeners.call([](Listener& l) { l.zonesChanged(); });
+    listeners.call([](Listener& l) { l.instrumentChanged(); });
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

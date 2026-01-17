@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "SampleZone.h"
+#include "InstrumentLoader.h"
 
 class SuperSimpleSamplerProcessor : public juce::AudioProcessor
 {
@@ -36,19 +37,20 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
-    // Sample zone management
-    int addSampleZone(const juce::File& file);
-    int addSampleZone(const juce::File& file, int lowNote, int highNote, int rootNote, int lowVel, int highVel);
-    void removeSampleZone(int index);
-    void clearAllZones();
-    void updateZoneMapping(int index, int lowNote, int highNote, int rootNote, int lowVel, int highVel);
+    // Instrument management
+    std::vector<InstrumentInfo> getAvailableInstruments();
+    void loadInstrument(int index);
+    void loadInstrumentFromFile(const juce::File& definitionFile);
+    void unloadInstrument();
+    void refreshInstrumentList();
 
     // Getters
-    int getNumZones() const { return static_cast<int>(sampleZones.size()); }
+    bool hasInstrumentLoaded() const { return currentInstrument.isValid(); }
+    const LoadedInstrument& getCurrentInstrument() const { return currentInstrument; }
+    int getNumZones() const { return static_cast<int>(currentInstrument.zones.size()); }
     const SampleZone* getZone(int index) const;
-    bool hasAnySamples() const { return !sampleZones.empty(); }
 
-    // Selected zone for UI
+    // Selected zone for waveform display
     int getSelectedZoneIndex() const { return selectedZoneIndex; }
     void setSelectedZoneIndex(int index) { selectedZoneIndex = index; }
     const SampleZone* getSelectedZone() const;
@@ -60,19 +62,20 @@ public:
     {
     public:
         virtual ~Listener() = default;
-        virtual void zonesChanged() = 0;
+        virtual void instrumentChanged() = 0;
     };
 
-    void addListener(Listener* listener) { listeners.add(listener); }
-    void removeListener(Listener* listener) { listeners.remove(listener); }
+    void addZoneListener(Listener* listener) { listeners.add(listener); }
+    void removeZoneListener(Listener* listener) { listeners.remove(listener); }
 
 private:
     juce::AudioProcessorValueTreeState parameters;
 
     juce::Synthesiser sampler;
-    juce::AudioFormatManager formatManager;
+    InstrumentLoader instrumentLoader;
 
-    std::vector<SampleZone> sampleZones;
+    std::vector<InstrumentInfo> availableInstruments;
+    LoadedInstrument currentInstrument;
     int selectedZoneIndex = -1;
 
     juce::ListenerList<Listener> listeners;

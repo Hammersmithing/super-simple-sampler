@@ -56,7 +56,7 @@ void WaveformDisplay::paint(juce::Graphics& g)
     {
         g.setColour(juce::Colours::grey);
         g.setFont(14.0f);
-        g.drawFittedText("Select a sample or drag files to the list", bounds, juce::Justification::centred, 2);
+        g.drawFittedText("No sample selected", bounds, juce::Justification::centred, 1);
     }
 }
 
@@ -64,6 +64,71 @@ void WaveformDisplay::setZone(const SampleZone* zone)
 {
     currentZone = zone;
     repaint();
+}
+
+//==============================================================================
+// InstrumentListBox
+//==============================================================================
+
+InstrumentListBox::InstrumentListBox(SuperSimpleSamplerProcessor& p)
+    : processor(p)
+{
+    listBox.setModel(this);
+    listBox.setColour(juce::ListBox::backgroundColourId, juce::Colour(0xff252525));
+    listBox.setRowHeight(28);
+    addAndMakeVisible(listBox);
+    refresh();
+}
+
+void InstrumentListBox::resized()
+{
+    listBox.setBounds(getLocalBounds());
+}
+
+int InstrumentListBox::getNumRows()
+{
+    return static_cast<int>(instruments.size());
+}
+
+void InstrumentListBox::paintListBoxItem(int row, juce::Graphics& g, int width, int height, bool selected)
+{
+    if (selected)
+        g.fillAll(juce::Colour(0xff3a7bcc));
+    else if (row % 2 == 0)
+        g.fillAll(juce::Colour(0xff2a2a2a));
+    else
+        g.fillAll(juce::Colour(0xff252525));
+
+    if (row >= 0 && row < static_cast<int>(instruments.size()))
+    {
+        const auto& info = instruments[static_cast<size_t>(row)];
+
+        g.setColour(juce::Colours::white);
+        g.setFont(14.0f);
+        g.drawText(info.name, 8, 0, width - 16, height, juce::Justification::centredLeft, true);
+    }
+}
+
+void InstrumentListBox::listBoxItemClicked(int row, const juce::MouseEvent&)
+{
+    // Single click just selects
+    listBox.selectRow(row);
+}
+
+void InstrumentListBox::listBoxItemDoubleClicked(int row, const juce::MouseEvent&)
+{
+    // Double click loads the instrument
+    if (row >= 0 && row < static_cast<int>(instruments.size()))
+    {
+        processor.loadInstrument(row);
+    }
+}
+
+void InstrumentListBox::refresh()
+{
+    processor.refreshInstrumentList();
+    instruments = processor.getAvailableInstruments();
+    listBox.updateContent();
 }
 
 //==============================================================================
@@ -75,13 +140,8 @@ SampleListBox::SampleListBox(SuperSimpleSamplerProcessor& p)
 {
     listBox.setModel(this);
     listBox.setColour(juce::ListBox::backgroundColourId, juce::Colour(0xff252525));
-    listBox.setRowHeight(24);
+    listBox.setRowHeight(22);
     addAndMakeVisible(listBox);
-}
-
-void SampleListBox::paint(juce::Graphics& g)
-{
-    g.fillAll(juce::Colour(0xff252525));
 }
 
 void SampleListBox::resized()
@@ -106,10 +166,11 @@ void SampleListBox::paintListBoxItem(int row, juce::Graphics& g, int width, int 
     if (const auto* zone = processor.getZone(row))
     {
         g.setColour(juce::Colours::white);
-        g.setFont(13.0f);
+        g.setFont(12.0f);
 
         juce::String text = zone->name;
         text += " [" + juce::String(zone->lowNote) + "-" + juce::String(zone->highNote) + "]";
+        text += " v" + juce::String(zone->lowVelocity) + "-" + juce::String(zone->highVelocity);
 
         g.drawText(text, 5, 0, width - 10, height, juce::Justification::centredLeft, true);
     }
@@ -118,38 +179,9 @@ void SampleListBox::paintListBoxItem(int row, juce::Graphics& g, int width, int 
 void SampleListBox::listBoxItemClicked(int row, const juce::MouseEvent&)
 {
     processor.setSelectedZoneIndex(row);
+    listBox.selectRow(row);
     if (onSelectionChanged)
         onSelectionChanged();
-}
-
-void SampleListBox::deleteKeyPressed(int lastRowSelected)
-{
-    processor.removeSampleZone(lastRowSelected);
-}
-
-bool SampleListBox::isInterestedInFileDrag(const juce::StringArray& files)
-{
-    for (const auto& file : files)
-    {
-        if (file.endsWith(".wav") || file.endsWith(".aif") || file.endsWith(".aiff") ||
-            file.endsWith(".mp3") || file.endsWith(".flac") || file.endsWith(".ogg"))
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-void SampleListBox::filesDropped(const juce::StringArray& files, int, int)
-{
-    for (const auto& file : files)
-    {
-        juce::File f(file);
-        if (f.existsAsFile())
-        {
-            processor.addSampleZone(f);
-        }
-    }
 }
 
 void SampleListBox::refresh()
@@ -159,147 +191,51 @@ void SampleListBox::refresh()
 }
 
 //==============================================================================
-// ZoneMappingEditor
-//==============================================================================
-
-ZoneMappingEditor::ZoneMappingEditor(SuperSimpleSamplerProcessor& p)
-    : processor(p)
-{
-    titleLabel.setText("Zone Mapping", juce::dontSendNotification);
-    titleLabel.setFont(juce::Font(16.0f, juce::Font::bold));
-    titleLabel.setJustificationType(juce::Justification::centred);
-    addAndMakeVisible(titleLabel);
-
-    auto setupSlider = [this](juce::Slider& slider, juce::Label& label, const juce::String& labelText,
-                               double min, double max, double defaultVal)
-    {
-        slider.setSliderStyle(juce::Slider::LinearHorizontal);
-        slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
-        slider.setRange(min, max, 1.0);
-        slider.setValue(defaultVal);
-        slider.onValueChange = [this]() { updateZone(); };
-        addAndMakeVisible(slider);
-
-        label.setText(labelText, juce::dontSendNotification);
-        label.setJustificationType(juce::Justification::centredLeft);
-        addAndMakeVisible(label);
-    };
-
-    setupSlider(lowNoteSlider, lowNoteLabel, "Low Note:", 0, 127, 0);
-    setupSlider(highNoteSlider, highNoteLabel, "High Note:", 0, 127, 127);
-    setupSlider(rootNoteSlider, rootNoteLabel, "Root Note:", 0, 127, 60);
-    setupSlider(lowVelSlider, lowVelLabel, "Low Vel:", 1, 127, 1);
-    setupSlider(highVelSlider, highVelLabel, "High Vel:", 1, 127, 127);
-
-    // Custom text formatting for note names
-    auto noteFormatter = [](double value) { return noteNumberToName(static_cast<int>(value)); };
-    lowNoteSlider.textFromValueFunction = noteFormatter;
-    highNoteSlider.textFromValueFunction = noteFormatter;
-    rootNoteSlider.textFromValueFunction = noteFormatter;
-}
-
-void ZoneMappingEditor::resized()
-{
-    auto area = getLocalBounds().reduced(5);
-
-    titleLabel.setBounds(area.removeFromTop(25));
-    area.removeFromTop(5);
-
-    const int rowHeight = 25;
-    const int labelWidth = 70;
-
-    auto makeRow = [&](juce::Label& label, juce::Slider& slider)
-    {
-        auto row = area.removeFromTop(rowHeight);
-        label.setBounds(row.removeFromLeft(labelWidth));
-        slider.setBounds(row);
-        area.removeFromTop(3);
-    };
-
-    makeRow(lowNoteLabel, lowNoteSlider);
-    makeRow(highNoteLabel, highNoteSlider);
-    makeRow(rootNoteLabel, rootNoteSlider);
-    makeRow(lowVelLabel, lowVelSlider);
-    makeRow(highVelLabel, highVelSlider);
-}
-
-void ZoneMappingEditor::setZoneIndex(int index)
-{
-    currentZoneIndex = index;
-    refresh();
-}
-
-void ZoneMappingEditor::refresh()
-{
-    if (const auto* zone = processor.getZone(currentZoneIndex))
-    {
-        lowNoteSlider.setValue(zone->lowNote, juce::dontSendNotification);
-        highNoteSlider.setValue(zone->highNote, juce::dontSendNotification);
-        rootNoteSlider.setValue(zone->rootNote, juce::dontSendNotification);
-        lowVelSlider.setValue(zone->lowVelocity, juce::dontSendNotification);
-        highVelSlider.setValue(zone->highVelocity, juce::dontSendNotification);
-
-        setEnabled(true);
-    }
-    else
-    {
-        setEnabled(false);
-    }
-}
-
-void ZoneMappingEditor::updateZone()
-{
-    if (currentZoneIndex >= 0)
-    {
-        processor.updateZoneMapping(
-            currentZoneIndex,
-            static_cast<int>(lowNoteSlider.getValue()),
-            static_cast<int>(highNoteSlider.getValue()),
-            static_cast<int>(rootNoteSlider.getValue()),
-            static_cast<int>(lowVelSlider.getValue()),
-            static_cast<int>(highVelSlider.getValue())
-        );
-    }
-}
-
-juce::String ZoneMappingEditor::noteNumberToName(int noteNumber)
-{
-    static const char* noteNames[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-    int octave = (noteNumber / 12) - 1;
-    int note = noteNumber % 12;
-    return juce::String(noteNames[note]) + juce::String(octave);
-}
-
-//==============================================================================
 // SuperSimpleSamplerEditor
 //==============================================================================
 
 SuperSimpleSamplerEditor::SuperSimpleSamplerEditor(SuperSimpleSamplerProcessor& p)
-    : AudioProcessorEditor(&p), processorRef(p), sampleList(p), zoneMappingEditor(p)
+    : AudioProcessorEditor(&p), processorRef(p), instrumentList(p), sampleList(p)
 {
-    processorRef.addListener(this);
+    processorRef.addZoneListener(this);
 
+    // Instrument list
+    addAndMakeVisible(instrumentList);
+
+    // Sample list
     addAndMakeVisible(sampleList);
+    sampleList.onSelectionChanged = [this]() { updateWaveformDisplay(); };
+
+    // Waveform display
     addAndMakeVisible(waveformDisplay);
-    addAndMakeVisible(zoneMappingEditor);
 
-    sampleList.onSelectionChanged = [this]()
+    // Refresh button
+    refreshButton.setButtonText("Refresh");
+    refreshButton.onClick = [this]()
     {
-        updateWaveformDisplay();
-        zoneMappingEditor.setZoneIndex(processorRef.getSelectedZoneIndex());
+        instrumentList.refresh();
     };
+    addAndMakeVisible(refreshButton);
 
-    // Load button
-    loadButton.setButtonText("Add Sample");
-    loadButton.onClick = [this]() { loadButtonClicked(); };
-    addAndMakeVisible(loadButton);
+    // Open folder button
+    openFolderButton.setButtonText("Open Folder");
+    openFolderButton.onClick = []()
+    {
+        InstrumentLoader::ensureInstrumentsFolderExists();
+        InstrumentLoader::getInstrumentsFolder().startAsProcess();
+    };
+    addAndMakeVisible(openFolderButton);
 
-    // Clear button
-    clearButton.setButtonText("Clear All");
-    clearButton.onClick = [this]() { clearButtonClicked(); };
-    addAndMakeVisible(clearButton);
+    // Instrument info labels
+    instrumentNameLabel.setFont(juce::FontOptions(18.0f).withStyle("Bold"));
+    instrumentNameLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    addAndMakeVisible(instrumentNameLabel);
 
-    // Setup sliders
+    instrumentAuthorLabel.setFont(juce::FontOptions(12.0f));
+    instrumentAuthorLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible(instrumentAuthorLabel);
+
+    // Setup ADSR sliders
     auto setupSlider = [this](juce::Slider& slider, juce::Label& label, const juce::String& labelText)
     {
         slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -308,7 +244,7 @@ SuperSimpleSamplerEditor::SuperSimpleSamplerEditor(SuperSimpleSamplerProcessor& 
 
         label.setText(labelText, juce::dontSendNotification);
         label.setJustificationType(juce::Justification::centred);
-        label.setFont(juce::Font(12.0f));
+        label.setFont(juce::FontOptions(12.0f));
         addAndMakeVisible(label);
     };
 
@@ -331,15 +267,16 @@ SuperSimpleSamplerEditor::SuperSimpleSamplerEditor(SuperSimpleSamplerProcessor& 
         processorRef.getParameters(), "gain", gainSlider);
 
     // Initial state
+    updateInstrumentInfo();
     updateWaveformDisplay();
-    zoneMappingEditor.setZoneIndex(processorRef.getSelectedZoneIndex());
+    sampleList.refresh();
 
-    setSize(700, 500);
+    setSize(750, 500);
 }
 
 SuperSimpleSamplerEditor::~SuperSimpleSamplerEditor()
 {
-    processorRef.removeListener(this);
+    processorRef.removeZoneListener(this);
 }
 
 void SuperSimpleSamplerEditor::paint(juce::Graphics& g)
@@ -349,6 +286,12 @@ void SuperSimpleSamplerEditor::paint(juce::Graphics& g)
     g.setColour(juce::Colours::white);
     g.setFont(20.0f);
     g.drawFittedText("Super Simple Sampler", 0, 5, getWidth(), 30, juce::Justification::centred, 1);
+
+    // Section labels
+    g.setFont(12.0f);
+    g.setColour(juce::Colours::lightgrey);
+    g.drawText("INSTRUMENTS", 10, 38, 170, 16, juce::Justification::centredLeft);
+    g.drawText("SAMPLES", 190, 38, 150, 16, juce::Justification::centredLeft);
 }
 
 void SuperSimpleSamplerEditor::resized()
@@ -356,31 +299,43 @@ void SuperSimpleSamplerEditor::resized()
     auto area = getLocalBounds().reduced(10);
     area.removeFromTop(30); // Title space
 
-    // Left panel: sample list
-    auto leftPanel = area.removeFromLeft(180);
+    // Top section labels space
+    area.removeFromTop(20);
 
-    auto buttonRow = leftPanel.removeFromTop(28);
-    loadButton.setBounds(buttonRow.removeFromLeft(88));
+    // Left panel: instrument list
+    auto leftPanel = area.removeFromLeft(170);
+
+    auto buttonRow = leftPanel.removeFromBottom(28);
+    refreshButton.setBounds(buttonRow.removeFromLeft(80));
     buttonRow.removeFromLeft(4);
-    clearButton.setBounds(buttonRow);
+    openFolderButton.setBounds(buttonRow);
 
-    leftPanel.removeFromTop(5);
-    sampleList.setBounds(leftPanel);
+    leftPanel.removeFromBottom(5);
+    instrumentList.setBounds(leftPanel);
+
+    area.removeFromLeft(10); // Spacing
+
+    // Middle panel: sample list
+    auto middlePanel = area.removeFromLeft(180);
+    sampleList.setBounds(middlePanel);
 
     area.removeFromLeft(10); // Spacing
 
     // Right panel
     auto rightPanel = area;
 
-    // Top: waveform display
-    waveformDisplay.setBounds(rightPanel.removeFromTop(120));
+    // Instrument info
+    auto infoArea = rightPanel.removeFromTop(50);
+    instrumentNameLabel.setBounds(infoArea.removeFromTop(25));
+    instrumentAuthorLabel.setBounds(infoArea);
+
+    rightPanel.removeFromTop(5);
+
+    // Waveform display
+    waveformDisplay.setBounds(rightPanel.removeFromTop(100));
     rightPanel.removeFromTop(10);
 
-    // Middle: zone mapping editor
-    zoneMappingEditor.setBounds(rightPanel.removeFromTop(170));
-    rightPanel.removeFromTop(10);
-
-    // Bottom: ADSR + Gain knobs
+    // ADSR + Gain knobs
     auto knobArea = rightPanel;
     const int knobWidth = knobArea.getWidth() / 5;
     const int labelHeight = 18;
@@ -406,45 +361,34 @@ void SuperSimpleSamplerEditor::resized()
     gainSlider.setBounds(gainArea);
 }
 
-void SuperSimpleSamplerEditor::zonesChanged()
+void SuperSimpleSamplerEditor::instrumentChanged()
 {
-    // Called from processor when zones change
     juce::MessageManager::callAsync([this]()
     {
+        updateInstrumentInfo();
         sampleList.refresh();
         updateWaveformDisplay();
-        zoneMappingEditor.setZoneIndex(processorRef.getSelectedZoneIndex());
     });
 }
 
-void SuperSimpleSamplerEditor::loadButtonClicked()
+void SuperSimpleSamplerEditor::updateInstrumentInfo()
 {
-    fileChooser = std::make_unique<juce::FileChooser>(
-        "Select samples to load",
-        juce::File{},
-        "*.wav;*.aif;*.aiff;*.mp3;*.flac;*.ogg"
-    );
-
-    auto flags = juce::FileBrowserComponent::openMode |
-                 juce::FileBrowserComponent::canSelectFiles |
-                 juce::FileBrowserComponent::canSelectMultipleItems;
-
-    fileChooser->launchAsync(flags, [this](const juce::FileChooser& fc)
+    if (processorRef.hasInstrumentLoaded())
     {
-        auto files = fc.getResults();
-        for (const auto& file : files)
-        {
-            if (file.existsAsFile())
-            {
-                processorRef.addSampleZone(file);
-            }
-        }
-    });
-}
+        const auto& instrument = processorRef.getCurrentInstrument();
+        instrumentNameLabel.setText(instrument.info.name, juce::dontSendNotification);
 
-void SuperSimpleSamplerEditor::clearButtonClicked()
-{
-    processorRef.clearAllZones();
+        juce::String authorText = instrument.info.author.isNotEmpty()
+            ? "by " + instrument.info.author
+            : "";
+        authorText += " (" + juce::String(instrument.zones.size()) + " samples)";
+        instrumentAuthorLabel.setText(authorText, juce::dontSendNotification);
+    }
+    else
+    {
+        instrumentNameLabel.setText("No instrument loaded", juce::dontSendNotification);
+        instrumentAuthorLabel.setText("Double-click an instrument to load it", juce::dontSendNotification);
+    }
 }
 
 void SuperSimpleSamplerEditor::updateWaveformDisplay()

@@ -26,6 +26,7 @@ target_sources(SuperSimpleSampler
     PRIVATE
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
+        Source/InstrumentLoader.cpp
 )
 
 target_compile_definitions(SuperSimpleSampler
