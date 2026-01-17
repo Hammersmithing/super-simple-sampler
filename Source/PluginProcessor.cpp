@@ -348,13 +348,26 @@ void SuperSimpleSamplerProcessor::handleNoteOn(int midiChannel, int midiNote, fl
     auto matchingZones = findMatchingZones(midiNote, intVelocity);
 
     if (matchingZones.empty())
+    {
+        DBG("No matching zones for note " << midiNote << " velocity " << intVelocity);
         return;
+    }
 
     // Randomly select one zone (round-robin)
     std::uniform_int_distribution<int> dist(0, static_cast<int>(matchingZones.size()) - 1);
     int selectedIndex = matchingZones[static_cast<size_t>(dist(randomGenerator))];
 
     auto* selectedSound = sampler.getSound(selectedIndex).get();
+
+    // Debug: show which sample was selected
+    if (auto* zoneSound = dynamic_cast<SampleZoneSound*>(selectedSound))
+    {
+        const auto& zone = zoneSound->getZone();
+        DBG("Note " << midiNote << " vel " << intVelocity
+            << " -> " << zone.name
+            << " (velRange " << zone.lowVelocity << "-" << zone.highVelocity
+            << ", " << matchingZones.size() << " RR options)");
+    }
 
     // Get current polyphony setting
     int maxVoices = static_cast<int>(polyphonyParam->load());
