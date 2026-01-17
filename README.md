@@ -8,6 +8,52 @@ Create a sampler that combines the best aspects of:
 - **Decent Sampler** - Simple, lightweight, easy to create instruments
 - **Native Instruments Kontakt** - Deep scripting, advanced modulation, professional sound design
 
+## Design Philosophy: Code-Based Instrument Building
+
+Inspired by Decent Sampler's approach, instruments will be defined using a **human-readable XML format**. This means:
+
+- **Instruments are code** - No proprietary binary formats. Instruments are text files you can read, edit, and version control.
+- **Shareable and hackable** - Developers can create, share, and modify instruments with any text editor.
+- **Package format** - Instruments are distributed as a single file (zipped XML + samples) for easy sharing.
+- **Decent Sampler compatibility** - Long-term goal to import `.dspreset` files so existing libraries can be used.
+
+### Example Instrument Definition (Target Format)
+```xml
+<SuperSimpleSampler version="1.0">
+  <meta>
+    <name>My Piano</name>
+    <author>ALDEN HAMMERSMITH</author>
+  </meta>
+
+  <ui background="wood_panel.png">
+    <knob id="cutoff" x="50" y="100" param="filter.cutoff"/>
+    <knob id="resonance" x="120" y="100" param="filter.resonance"/>
+  </ui>
+
+  <groups>
+    <group name="sustain" attack="0.01" release="0.3">
+      <sample path="samples/C3_pp.wav" rootNote="48" loNote="36" hiNote="54" loVel="1" hiVel="40"/>
+      <sample path="samples/C3_mf.wav" rootNote="48" loNote="36" hiNote="54" loVel="41" hiVel="90"/>
+      <sample path="samples/C3_ff.wav" rootNote="48" loNote="36" hiNote="54" loVel="91" hiVel="127"/>
+    </group>
+  </groups>
+
+  <effects>
+    <filter type="lowpass" cutoff="8000" resonance="0.5"/>
+    <reverb mix="0.2" size="0.6"/>
+  </effects>
+
+  <modulation>
+    <route source="velocity" dest="filter.cutoff" amount="0.4"/>
+    <route source="modwheel" dest="lfo1.amount" amount="1.0"/>
+  </modulation>
+
+  <script src="scripts/custom_behavior.lua"/>
+</SuperSimpleSampler>
+```
+
+This approach empowers instrument developers to build sophisticated sample libraries without needing to compile code.
+
 ## Long-Term Goals
 
 ### Core Sampler Engine
@@ -80,10 +126,12 @@ Create a sampler that combines the best aspects of:
 - [ ] Key/velocity tracking
 
 ### Phase 5: Instrument Format
-- [ ] Define instrument file format
+- [ ] Define XML instrument format (.sss files)
+- [ ] XML parser for loading instruments
+- [ ] Package format (.ssslib - zipped XML + samples)
 - [ ] Save/load instruments
 - [ ] Preset browser
-- [ ] Import Decent Sampler format (stretch goal)
+- [ ] Import Decent Sampler .dspreset format
 
 ### Phase 6: Scripting
 - [ ] Lua integration
