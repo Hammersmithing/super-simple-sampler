@@ -1,46 +1,100 @@
 # Super Simple Sampler
 
-A sampler VST3/AU plugin built with JUCE, with the long-term goal of becoming a powerful, flexible sampler inspired by Decent Sampler and Native Instruments Kontakt.
-
-## Vision
-
-Create a sampler that combines the best aspects of:
-- **Decent Sampler** - Simple, lightweight, easy to create instruments
-- **Native Instruments Kontakt** - Deep scripting, advanced modulation, professional sound design
-
-## Design Philosophy: Code-Based Instrument Building
-
-Inspired by Decent Sampler's approach, instruments will be defined using a **human-readable XML format**. This means:
-
-- **Instruments are code** - No proprietary binary formats. Instruments are text files you can read, edit, and version control.
-- **Shareable and hackable** - Developers can create, share, and modify instruments with any text editor.
-- **Package format** - Instruments are distributed as a single file (zipped XML + samples) for easy sharing.
-- **Decent Sampler compatibility** - Long-term goal to import `.dspreset` files so existing libraries can be used.
+A sampler VST3/AU plugin built with JUCE, inspired by Decent Sampler and Native Instruments Kontakt.
 
 ## Current Features
 
 - **XML-based instrument format** (.sss files)
 - **Multi-sample support** with key range and velocity layer mapping
-- **16-voice polyphony** with pitch interpolation
+- **Round-robin sample selection** - randomly selects from matching samples
+- **Velocity layers** - up to 127 velocity layers per note
+- **Polyphony control** - 1 to 64 voices, adjustable in UI
+- **Sustain pedal support** (MIDI CC 64)
 - **ADSR envelope** (Attack, Decay, Sustain, Release)
 - **Gain control**
-- **Instrument browser** - scans ~/Documents/Super Simple Sampler/Instruments/
+- **Pitch-down only** - samples are never pitched up, only down
+- **Instrument browser** - scans `~/Documents/Super Simple Sampler/Instruments/`
 - **Waveform display** for selected samples
+- **Python build tool** - auto-generates instrument.sss from sample folders
+
+## Sample Naming Convention
+
+Samples should follow this naming pattern:
+
+```
+{Note}_{Velocity}_{RoundRobin}_{OptionalSuffix}.wav
+```
+
+### Examples
+| Filename | Note | Velocity | Round Robin |
+|----------|------|----------|-------------|
+| `C3_033_01.wav` | C3 | 33 | 1 |
+| `C#3_127_02.wav` | C#3 | 127 | 2 |
+| `Db3_064_01.wav` | Db3 | 64 | 1 |
+| `F#4_100_03_piano.wav` | F#4 | 100 | 3 |
+
+### Velocity Value = Ceiling
+
+The velocity number in the filename is the **ceiling** (highest velocity) for that layer:
+
+| Filename Velocity | Actual Range |
+|-------------------|--------------|
+| `_001_` | 1 only |
+| `_033_` | 2-33 |
+| `_064_` | 34-64 |
+| `_096_` | 65-96 |
+| `_127_` | 97-127 |
+
+### Pitch Behavior
+
+Samples are **only pitched down**, never up:
+- Each sample's `hiNote` equals its `rootNote`
+- Notes above the highest sample won't trigger any sound
+- This prevents unnatural upward pitch shifting
 
 ## Creating Instruments
 
-### Folder Structure
+### Option 1: Use the Build Tool (Recommended)
+
+The Python build tool automatically generates instrument.sss files from a folder of samples:
+
+```bash
+cd tools
+python build_instrument.py /path/to/samples --name "My Piano" --author "Your Name"
+```
+
+This will:
+1. Scan for audio files (.wav, .aiff, .flac, .mp3, .ogg)
+2. Parse filenames using the naming convention
+3. Calculate velocity ranges (ceiling-based)
+4. Calculate key ranges (pitch-down only)
+5. Generate instrument.sss in the parent folder
+
+#### Build Tool Options
+```
+python build_instrument.py <samples_dir> [options]
+
+Options:
+  -n, --name      Instrument name (default: "My Instrument")
+  -a, --author    Author name
+  -o, --output    Output path for instrument.sss
+```
+
+### Option 2: Manual XML Creation
+
+#### Folder Structure
 ```
 ~/Documents/Super Simple Sampler/Instruments/
 └── MyPiano/
     ├── instrument.sss      <- XML definition
     └── samples/
-        ├── C3_soft.wav
-        ├── C3_medium.wav
-        └── C3_hard.wav
+        ├── C3_001_01.wav
+        ├── C3_033_01.wav
+        ├── C3_064_01.wav
+        └── ...
 ```
 
-### instrument.sss Format
+#### instrument.sss Format
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <SuperSimpleSampler version="1.0">
@@ -50,40 +104,62 @@ Inspired by Decent Sampler's approach, instruments will be defined using a **hum
   </meta>
 
   <samples>
-    <!-- Velocity layers for C3 zone -->
-    <sample file="samples/C3_soft.wav" rootNote="48" loNote="36" hiNote="59" loVel="1" hiVel="50"/>
-    <sample file="samples/C3_hard.wav" rootNote="48" loNote="36" hiNote="59" loVel="51" hiVel="127"/>
+    <!-- C3 velocity layer 33 (covers vel 2-33) with 3 round robins -->
+    <sample file="samples/C3_033_01.wav" rootNote="48" loNote="0" hiNote="48" loVel="2" hiVel="33"/>
+    <sample file="samples/C3_033_02.wav" rootNote="48" loNote="0" hiNote="48" loVel="2" hiVel="33"/>
+    <sample file="samples/C3_033_03.wav" rootNote="48" loNote="0" hiNote="48" loVel="2" hiVel="33"/>
 
-    <!-- Higher zone -->
-    <sample file="samples/C5.wav" rootNote="72" loNote="60" hiNote="84" loVel="1" hiVel="127"/>
+    <!-- D3 velocity layer 33 (covers vel 2-33) -->
+    <sample file="samples/D3_033_01.wav" rootNote="50" loNote="49" hiNote="50" loVel="2" hiVel="33"/>
   </samples>
 </SuperSimpleSampler>
 ```
 
 ### Sample Attributes
+
 | Attribute | Description | Default |
 |-----------|-------------|---------|
 | `file` | Path to audio file (relative to instrument folder) | Required |
 | `rootNote` | MIDI note where sample plays at original pitch | 60 (C4) |
 | `loNote` | Lowest MIDI note that triggers this sample | 0 |
-| `hiNote` | Highest MIDI note that triggers this sample | 127 |
+| `hiNote` | Highest MIDI note (should equal rootNote for pitch-down only) | 127 |
 | `loVel` | Lowest velocity that triggers this sample | 1 |
 | `hiVel` | Highest velocity that triggers this sample | 127 |
 
-This approach empowers instrument developers to build sample libraries with just a text editor.
+## UI Controls
+
+| Control | Range | Description |
+|---------|-------|-------------|
+| Attack | 0.001 - 5.0s | Envelope attack time |
+| Decay | 0.001 - 5.0s | Envelope decay time |
+| Sustain | 0 - 100% | Envelope sustain level |
+| Release | 0.001 - 10.0s | Envelope release time |
+| Gain | 0 - 200% | Output gain |
+| Voices | 1 - 64 | Maximum polyphony |
+
+## Design Philosophy
+
+Inspired by Decent Sampler's approach:
+
+- **Instruments are code** - Human-readable XML format, no proprietary binaries
+- **Shareable and hackable** - Create, share, and modify with any text editor
+- **Version controllable** - Text-based format works great with Git
+- **Automation friendly** - Python tool generates instruments from sample folders
 
 ## Long-Term Goals
 
 ### Core Sampler Engine
-- [ ] Multi-sample support with velocity layers
-- [ ] Round-robin sample playback
-- [ ] Key and velocity mapping with crossfades
+- [x] Multi-sample support with velocity layers
+- [x] Round-robin sample playback
+- [x] Key and velocity mapping
+- [x] Sustain pedal support
+- [ ] Key/velocity crossfades
 - [ ] Multiple sample formats (WAV, AIFF, FLAC, MP3)
 - [ ] Streaming from disk for large libraries
 - [ ] Sample start/end, loop points with crossfade
 
 ### Sound Shaping
-- [ ] ADSR amplitude envelope (per voice)
+- [x] ADSR amplitude envelope (per voice)
 - [ ] Filter section (LP, HP, BP, Notch) with envelope
 - [ ] Pitch envelope
 - [ ] LFOs (multiple, assignable to any parameter)
@@ -99,17 +175,20 @@ This approach empowers instrument developers to build sample libraries with just
 ### Scripting & Customization
 - [ ] Lua scripting for custom instrument behavior
 - [ ] Custom GUI support for instrument developers
-- [ ] XML/JSON-based instrument format
 - [ ] Preset/patch management system
 
 ### User Interface
-- [ ] Waveform display with loop point editing
+- [x] Waveform display
+- [x] Polyphony control
+- [ ] Loop point editing
 - [ ] Keyboard mapping editor (drag & drop)
 - [ ] Visual modulation routing
 - [ ] Resizable, scalable UI
 - [ ] Dark/light themes
 
 ### Advanced Features
+- [ ] Package format (.ssslib - zipped XML + samples)
+- [ ] Import Decent Sampler .dspreset format
 - [ ] Convolution reverb with impulse response loading
 - [ ] Time-stretching and pitch-shifting
 - [ ] Granular playback mode
@@ -117,57 +196,13 @@ This approach empowers instrument developers to build sample libraries with just
 - [ ] Microtuning support
 - [ ] MPE support
 
-## Development Roadmap
-
-### Phase 1: Foundation ✅
-- [x] Basic single-sample playback
-- [x] MIDI note triggering with pitch shifting
-- [x] Simple ADSR envelope
-- [x] Basic UI with waveform display
-
-### Phase 2: Multi-Sample Support ✅
-- [x] Load multiple samples
-- [x] Key range mapping
-- [x] Velocity layer support
-- [x] XML-based instrument format (moved from Phase 5)
-
-### Phase 3: Sound Design Basics (Current)
-- [ ] Filter section
-- [ ] Additional envelopes
-- [ ] Single LFO
-- [ ] Basic effects (reverb, delay)
-
-### Phase 4: Modulation
-- [ ] Modulation matrix
-- [ ] MIDI CC learn
-- [ ] Multiple LFOs
-- [ ] Key/velocity tracking
-
-### Phase 5: Advanced Instrument Format
-- [x] Define XML instrument format (.sss files)
-- [x] XML parser for loading instruments
-- [x] Instrument browser
-- [ ] Package format (.ssslib - zipped XML + samples)
-- [ ] Import Decent Sampler .dspreset format
-
-### Phase 6: Scripting
-- [ ] Lua integration
-- [ ] Script API for instrument behavior
-- [ ] Custom UI framework
-
-### Phase 7: Polish & Advanced
-- [ ] Disk streaming
-- [ ] Granular mode
-- [ ] Time-stretch
-- [ ] MPE support
-- [ ] Performance optimization
-
 ## Building
 
 ### Requirements
 - [JUCE](https://github.com/juce-framework/JUCE) (clone to `~/JUCE`)
 - CMake 3.22+
 - C++17 compiler
+- Python 3.x (for build tool)
 
 ### Build Steps
 ```bash
@@ -178,10 +213,15 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build . --config Release
 ```
 
+### Output Locations
+- **VST3**: `build/SuperSimpleSampler_artefacts/Release/VST3/`
+- **AU**: `build/SuperSimpleSampler_artefacts/Release/AU/`
+- **Standalone**: `build/SuperSimpleSampler_artefacts/Release/Standalone/`
+
 ## License
 
 MIT
 
 ---
 
-*This is an ambitious long-term project. Development will proceed incrementally, with each phase building on the previous.*
+*Super Simple Sampler - Making sample-based instruments accessible to everyone.*
