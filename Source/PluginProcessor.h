@@ -87,6 +87,7 @@ private:
     std::atomic<float>* sustainParam = nullptr;
     std::atomic<float>* releaseParam = nullptr;
     std::atomic<float>* gainParam = nullptr;
+    std::atomic<float>* polyphonyParam = nullptr;
 
     void rebuildSampler();
     void updateADSR();

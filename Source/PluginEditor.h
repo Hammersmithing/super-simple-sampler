@@ -86,18 +86,21 @@ private:
     juce::Slider sustainSlider;
     juce::Slider releaseSlider;
     juce::Slider gainSlider;
+    juce::Slider polyphonySlider;
 
     juce::Label attackLabel;
     juce::Label decayLabel;
     juce::Label sustainLabel;
     juce::Label releaseLabel;
     juce::Label gainLabel;
+    juce::Label polyphonyLabel;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> decayAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sustainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> releaseAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> gainAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> polyphonyAttachment;
 
     void updateInstrumentInfo();
     void updateWaveformDisplay();

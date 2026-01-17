@@ -55,6 +55,12 @@ static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
         [](float value, int) { return juce::String(int(value * 100)) + "%"; }
     ));
 
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        juce::ParameterID("polyphony", 1),
+        "Polyphony",
+        1, 64, 16
+    ));
+
     return { params.begin(), params.end() };
 }
 
@@ -66,8 +72,8 @@ SuperSimpleSamplerProcessor::SuperSimpleSamplerProcessor()
     // Ensure instruments folder exists
     InstrumentLoader::ensureInstrumentsFolderExists();
 
-    // Add voices to the sampler (polyphony)
-    for (int i = 0; i < 16; ++i)
+    // Add max voices to the sampler (actual polyphony controlled by parameter)
+    for (int i = 0; i < 64; ++i)
         sampler.addVoice(new SampleZoneVoice());
 
     attackParam = parameters.getRawParameterValue("attack");
@@ -75,6 +81,7 @@ SuperSimpleSamplerProcessor::SuperSimpleSamplerProcessor()
     sustainParam = parameters.getRawParameterValue("sustain");
     releaseParam = parameters.getRawParameterValue("release");
     gainParam = parameters.getRawParameterValue("gain");
+    polyphonyParam = parameters.getRawParameterValue("polyphony");
 
     // Initial scan for instruments
     refreshInstrumentList();
@@ -349,8 +356,11 @@ void SuperSimpleSamplerProcessor::handleNoteOn(int midiChannel, int midiNote, fl
 
     auto* selectedSound = sampler.getSound(selectedIndex).get();
 
-    // Find a free voice and start the note with the selected sound
-    for (int i = 0; i < sampler.getNumVoices(); ++i)
+    // Get current polyphony setting
+    int maxVoices = static_cast<int>(polyphonyParam->load());
+
+    // Find a free voice within the polyphony limit
+    for (int i = 0; i < maxVoices; ++i)
     {
         if (auto* voice = dynamic_cast<SampleZoneVoice*>(sampler.getVoice(i)))
         {

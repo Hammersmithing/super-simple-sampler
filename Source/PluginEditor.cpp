@@ -253,6 +253,7 @@ SuperSimpleSamplerEditor::SuperSimpleSamplerEditor(SuperSimpleSamplerProcessor& 
     setupSlider(sustainSlider, sustainLabel, "Sustain");
     setupSlider(releaseSlider, releaseLabel, "Release");
     setupSlider(gainSlider, gainLabel, "Gain");
+    setupSlider(polyphonySlider, polyphonyLabel, "Voices");
 
     // Attachments
     attackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -265,13 +266,15 @@ SuperSimpleSamplerEditor::SuperSimpleSamplerEditor(SuperSimpleSamplerProcessor& 
         processorRef.getParameters(), "release", releaseSlider);
     gainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         processorRef.getParameters(), "gain", gainSlider);
+    polyphonyAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processorRef.getParameters(), "polyphony", polyphonySlider);
 
     // Initial state
     updateInstrumentInfo();
     updateWaveformDisplay();
     sampleList.refresh();
 
-    setSize(750, 500);
+    setSize(620, 380);
 }
 
 SuperSimpleSamplerEditor::~SuperSimpleSamplerEditor()
@@ -296,49 +299,49 @@ void SuperSimpleSamplerEditor::paint(juce::Graphics& g)
 
 void SuperSimpleSamplerEditor::resized()
 {
-    auto area = getLocalBounds().reduced(10);
-    area.removeFromTop(30); // Title space
+    auto area = getLocalBounds().reduced(8);
+    area.removeFromTop(25); // Title space
 
     // Top section labels space
-    area.removeFromTop(20);
+    area.removeFromTop(16);
 
     // Left panel: instrument list
-    auto leftPanel = area.removeFromLeft(170);
+    auto leftPanel = area.removeFromLeft(140);
 
-    auto buttonRow = leftPanel.removeFromBottom(28);
-    refreshButton.setBounds(buttonRow.removeFromLeft(80));
+    auto buttonRow = leftPanel.removeFromBottom(24);
+    refreshButton.setBounds(buttonRow.removeFromLeft(65));
     buttonRow.removeFromLeft(4);
     openFolderButton.setBounds(buttonRow);
 
-    leftPanel.removeFromBottom(5);
+    leftPanel.removeFromBottom(4);
     instrumentList.setBounds(leftPanel);
 
-    area.removeFromLeft(10); // Spacing
+    area.removeFromLeft(6); // Spacing
 
     // Middle panel: sample list
-    auto middlePanel = area.removeFromLeft(180);
+    auto middlePanel = area.removeFromLeft(160);
     sampleList.setBounds(middlePanel);
 
-    area.removeFromLeft(10); // Spacing
+    area.removeFromLeft(6); // Spacing
 
     // Right panel
     auto rightPanel = area;
 
     // Instrument info
-    auto infoArea = rightPanel.removeFromTop(50);
-    instrumentNameLabel.setBounds(infoArea.removeFromTop(25));
+    auto infoArea = rightPanel.removeFromTop(40);
+    instrumentNameLabel.setBounds(infoArea.removeFromTop(20));
     instrumentAuthorLabel.setBounds(infoArea);
 
-    rightPanel.removeFromTop(5);
+    rightPanel.removeFromTop(4);
 
     // Waveform display
-    waveformDisplay.setBounds(rightPanel.removeFromTop(100));
-    rightPanel.removeFromTop(10);
+    waveformDisplay.setBounds(rightPanel.removeFromTop(70));
+    rightPanel.removeFromTop(6);
 
-    // ADSR + Gain knobs
+    // Knobs - 6 columns
     auto knobArea = rightPanel;
-    const int knobWidth = knobArea.getWidth() / 5;
-    const int labelHeight = 18;
+    const int knobWidth = knobArea.getWidth() / 6;
+    const int labelHeight = 16;
 
     auto attackArea = knobArea.removeFromLeft(knobWidth);
     attackLabel.setBounds(attackArea.removeFromTop(labelHeight));
@@ -356,9 +359,13 @@ void SuperSimpleSamplerEditor::resized()
     releaseLabel.setBounds(releaseArea.removeFromTop(labelHeight));
     releaseSlider.setBounds(releaseArea);
 
-    auto gainArea = knobArea;
+    auto gainArea = knobArea.removeFromLeft(knobWidth);
     gainLabel.setBounds(gainArea.removeFromTop(labelHeight));
     gainSlider.setBounds(gainArea);
+
+    auto polyphonyArea = knobArea;
+    polyphonyLabel.setBounds(polyphonyArea.removeFromTop(labelHeight));
+    polyphonySlider.setBounds(polyphonyArea);
 }
 
 void SuperSimpleSamplerEditor::instrumentChanged()
