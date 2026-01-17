@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_formats/juce_audio_formats.h>
+#include "SampleZone.h"
 
 class SuperSimpleSamplerProcessor : public juce::AudioProcessor
 {
@@ -35,16 +36,35 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
-    // Sample loading
-    void loadSample(const juce::File& file);
-    void loadSampleFromData(const void* data, size_t size, const juce::String& name);
-    bool hasSampleLoaded() const { return sampleLoaded; }
+    // Sample zone management
+    int addSampleZone(const juce::File& file);
+    int addSampleZone(const juce::File& file, int lowNote, int highNote, int rootNote, int lowVel, int highVel);
+    void removeSampleZone(int index);
+    void clearAllZones();
+    void updateZoneMapping(int index, int lowNote, int highNote, int rootNote, int lowVel, int highVel);
 
-    // Get waveform for display
-    const juce::AudioBuffer<float>& getWaveform() const { return waveform; }
-    int getSampleRootNote() const { return rootNote; }
+    // Getters
+    int getNumZones() const { return static_cast<int>(sampleZones.size()); }
+    const SampleZone* getZone(int index) const;
+    bool hasAnySamples() const { return !sampleZones.empty(); }
+
+    // Selected zone for UI
+    int getSelectedZoneIndex() const { return selectedZoneIndex; }
+    void setSelectedZoneIndex(int index) { selectedZoneIndex = index; }
+    const SampleZone* getSelectedZone() const;
 
     juce::AudioProcessorValueTreeState& getParameters() { return parameters; }
+
+    // Listener for UI updates
+    class Listener
+    {
+    public:
+        virtual ~Listener() = default;
+        virtual void zonesChanged() = 0;
+    };
+
+    void addListener(Listener* listener) { listeners.add(listener); }
+    void removeListener(Listener* listener) { listeners.remove(listener); }
 
 private:
     juce::AudioProcessorValueTreeState parameters;
@@ -52,9 +72,10 @@ private:
     juce::Synthesiser sampler;
     juce::AudioFormatManager formatManager;
 
-    juce::AudioBuffer<float> waveform;
-    bool sampleLoaded = false;
-    int rootNote = 60; // Middle C
+    std::vector<SampleZone> sampleZones;
+    int selectedZoneIndex = -1;
+
+    juce::ListenerList<Listener> listeners;
 
     // ADSR parameters
     std::atomic<float>* attackParam = nullptr;
@@ -63,7 +84,9 @@ private:
     std::atomic<float>* releaseParam = nullptr;
     std::atomic<float>* gainParam = nullptr;
 
+    void rebuildSampler();
     void updateADSR();
+    void notifyListeners();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SuperSimpleSamplerProcessor)
 };

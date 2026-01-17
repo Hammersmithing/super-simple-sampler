@@ -67,7 +67,7 @@ SuperSimpleSamplerProcessor::SuperSimpleSamplerProcessor()
 
     // Add voices to the sampler (polyphony)
     for (int i = 0; i < 16; ++i)
-        sampler.addVoice(new juce::SamplerVoice());
+        sampler.addVoice(new SampleZoneVoice());
 
     attackParam = parameters.getRawParameterValue("attack");
     decayParam = parameters.getRawParameterValue("decay");
@@ -99,6 +99,15 @@ void SuperSimpleSamplerProcessor::changeProgramName(int, const juce::String&) {}
 void SuperSimpleSamplerProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     sampler.setCurrentPlaybackSampleRate(sampleRate);
+
+    for (int i = 0; i < sampler.getNumVoices(); ++i)
+    {
+        if (auto* voice = dynamic_cast<SampleZoneVoice*>(sampler.getVoice(i)))
+        {
+            voice->prepareToPlay(sampleRate, samplesPerBlock);
+        }
+    }
+
     updateADSR();
 }
 
@@ -123,11 +132,11 @@ void SuperSimpleSamplerProcessor::updateADSR()
     adsrParams.sustain = sustainParam->load();
     adsrParams.release = releaseParam->load();
 
-    for (int i = 0; i < sampler.getNumSounds(); ++i)
+    for (int i = 0; i < sampler.getNumVoices(); ++i)
     {
-        if (auto* sound = dynamic_cast<juce::SamplerSound*>(sampler.getSound(i).get()))
+        if (auto* voice = dynamic_cast<SampleZoneVoice*>(sampler.getVoice(i)))
         {
-            sound->setEnvelopeParameters(adsrParams);
+            voice->setADSRParameters(adsrParams);
         }
     }
 }
@@ -170,77 +179,111 @@ void SuperSimpleSamplerProcessor::setStateInformation(const void* data, int size
             parameters.replaceState(juce::ValueTree::fromXml(*xmlState));
 }
 
-void SuperSimpleSamplerProcessor::loadSample(const juce::File& file)
+int SuperSimpleSamplerProcessor::addSampleZone(const juce::File& file)
+{
+    // Default: map to full keyboard and velocity range, root note = middle C
+    return addSampleZone(file, 0, 127, 60, 1, 127);
+}
+
+int SuperSimpleSamplerProcessor::addSampleZone(const juce::File& file, int lowNote, int highNote,
+                                                int rootNote, int lowVel, int highVel)
 {
     std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
 
-    if (reader != nullptr)
+    if (reader == nullptr)
+        return -1;
+
+    SampleZone zone;
+    zone.name = file.getFileNameWithoutExtension();
+    zone.sampleRate = reader->sampleRate;
+    zone.rootNote = rootNote;
+    zone.lowNote = lowNote;
+    zone.highNote = highNote;
+    zone.lowVelocity = lowVel;
+    zone.highVelocity = highVel;
+
+    zone.audioData.setSize(static_cast<int>(reader->numChannels),
+                           static_cast<int>(reader->lengthInSamples));
+    reader->read(&zone.audioData, 0, static_cast<int>(reader->lengthInSamples), 0, true, true);
+
+    sampleZones.push_back(std::move(zone));
+
+    int index = static_cast<int>(sampleZones.size()) - 1;
+    selectedZoneIndex = index;
+
+    rebuildSampler();
+    notifyListeners();
+
+    return index;
+}
+
+void SuperSimpleSamplerProcessor::removeSampleZone(int index)
+{
+    if (index >= 0 && index < static_cast<int>(sampleZones.size()))
     {
-        // Store waveform for display
-        waveform.setSize(static_cast<int>(reader->numChannels), static_cast<int>(reader->lengthInSamples));
-        reader->read(&waveform, 0, static_cast<int>(reader->lengthInSamples), 0, true, true);
+        sampleZones.erase(sampleZones.begin() + index);
 
-        // Create the sampler sound
-        juce::BigInteger allNotes;
-        allNotes.setRange(0, 128, true);
+        if (selectedZoneIndex >= static_cast<int>(sampleZones.size()))
+            selectedZoneIndex = static_cast<int>(sampleZones.size()) - 1;
 
-        sampler.clearSounds();
+        rebuildSampler();
+        notifyListeners();
+    }
+}
 
-        // Re-read for the sampler sound
-        reader.reset(formatManager.createReaderFor(file));
-        if (reader != nullptr)
+void SuperSimpleSamplerProcessor::clearAllZones()
+{
+    sampleZones.clear();
+    selectedZoneIndex = -1;
+    rebuildSampler();
+    notifyListeners();
+}
+
+void SuperSimpleSamplerProcessor::updateZoneMapping(int index, int lowNote, int highNote,
+                                                     int rootNote, int lowVel, int highVel)
+{
+    if (index >= 0 && index < static_cast<int>(sampleZones.size()))
+    {
+        auto& zone = sampleZones[static_cast<size_t>(index)];
+        zone.lowNote = lowNote;
+        zone.highNote = highNote;
+        zone.rootNote = rootNote;
+        zone.lowVelocity = lowVel;
+        zone.highVelocity = highVel;
+
+        rebuildSampler();
+        notifyListeners();
+    }
+}
+
+const SampleZone* SuperSimpleSamplerProcessor::getZone(int index) const
+{
+    if (index >= 0 && index < static_cast<int>(sampleZones.size()))
+        return &sampleZones[static_cast<size_t>(index)];
+    return nullptr;
+}
+
+const SampleZone* SuperSimpleSamplerProcessor::getSelectedZone() const
+{
+    return getZone(selectedZoneIndex);
+}
+
+void SuperSimpleSamplerProcessor::rebuildSampler()
+{
+    sampler.clearSounds();
+
+    for (const auto& zone : sampleZones)
+    {
+        if (zone.isValid())
         {
-            sampler.addSound(new juce::SamplerSound(
-                file.getFileNameWithoutExtension(),
-                *reader,
-                allNotes,
-                rootNote,    // root note
-                0.01,        // attack time (will be overridden by ADSR)
-                0.1,         // release time (will be overridden by ADSR)
-                20.0         // max sample length in seconds
-            ));
-
-            sampleLoaded = true;
-            updateADSR();
+            sampler.addSound(new SampleZoneSound(zone));
         }
     }
 }
 
-void SuperSimpleSamplerProcessor::loadSampleFromData(const void* data, size_t size, const juce::String& name)
+void SuperSimpleSamplerProcessor::notifyListeners()
 {
-    auto* inputStream = new juce::MemoryInputStream(data, size, false);
-    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(std::unique_ptr<juce::InputStream>(inputStream)));
-
-    if (reader != nullptr)
-    {
-        waveform.setSize(static_cast<int>(reader->numChannels), static_cast<int>(reader->lengthInSamples));
-        reader->read(&waveform, 0, static_cast<int>(reader->lengthInSamples), 0, true, true);
-
-        juce::BigInteger allNotes;
-        allNotes.setRange(0, 128, true);
-
-        sampler.clearSounds();
-
-        // Re-create reader from data
-        auto* inputStream2 = new juce::MemoryInputStream(data, size, false);
-        reader.reset(formatManager.createReaderFor(std::unique_ptr<juce::InputStream>(inputStream2)));
-
-        if (reader != nullptr)
-        {
-            sampler.addSound(new juce::SamplerSound(
-                name,
-                *reader,
-                allNotes,
-                rootNote,
-                0.01,
-                0.1,
-                20.0
-            ));
-
-            sampleLoaded = true;
-            updateADSR();
-        }
-    }
+    listeners.call([](Listener& l) { l.zonesChanged(); });
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
