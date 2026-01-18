@@ -1,5 +1,13 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <fstream>
+
+// Debug logging to file
+static void debugLog(const juce::String& msg)
+{
+    auto logFile = juce::File::getSpecialLocation(juce::File::userDesktopDirectory).getChildFile("sampler_debug.txt");
+    logFile.appendText(msg + "\n");
+}
 
 static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
@@ -83,12 +91,28 @@ SuperSimpleSamplerProcessor::SuperSimpleSamplerProcessor()
     gainParam = parameters.getRawParameterValue("gain");
     polyphonyParam = parameters.getRawParameterValue("polyphony");
 
+    // Initialize streaming components
+    streamingFormatManager.registerBasicFormats();
+    diskStreamer = std::make_unique<DiskStreamer>();
+    diskStreamer->setAudioFormatManager(&streamingFormatManager);
+
+    // Register streaming voices with the disk streamer
+    for (int i = 0; i < StreamingConstants::maxStreamingVoices; ++i)
+    {
+        diskStreamer->registerVoice(i, &streamingVoices[static_cast<size_t>(i)]);
+    }
+
     // Initial scan for instruments
     refreshInstrumentList();
 }
 
 SuperSimpleSamplerProcessor::~SuperSimpleSamplerProcessor()
 {
+    // Stop the disk streaming thread before destruction
+    if (diskStreamer != nullptr)
+    {
+        diskStreamer->stopThread();
+    }
 }
 
 const juce::String SuperSimpleSamplerProcessor::getName() const
@@ -117,6 +141,18 @@ void SuperSimpleSamplerProcessor::prepareToPlay(double sampleRate, int samplesPe
         {
             voice->prepareToPlay(sampleRate, samplesPerBlock);
         }
+    }
+
+    // Prepare streaming voices
+    for (auto& voice : streamingVoices)
+    {
+        voice.prepareToPlay(sampleRate, samplesPerBlock);
+    }
+
+    // Start the disk streaming thread if streaming is enabled
+    if (streamingEnabled && diskStreamer != nullptr)
+    {
+        diskStreamer->startThread();
     }
 
     updateADSR();
@@ -161,37 +197,45 @@ void SuperSimpleSamplerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     updateADSR();
 
-    // Process MIDI with custom handling for proper velocity/round-robin selection
-    juce::MidiBuffer processedMidi;
-
-    for (const auto metadata : midiMessages)
+    // Route to appropriate processing method based on streaming mode
+    if (streamingEnabled)
     {
-        auto message = metadata.getMessage();
-
-        if (message.isNoteOn())
-        {
-            handleNoteOn(message.getChannel(), message.getNoteNumber(),
-                        message.getFloatVelocity());
-        }
-        else if (message.isNoteOff())
-        {
-            handleNoteOff(message.getChannel(), message.getNoteNumber(),
-                         message.getFloatVelocity());
-        }
-        else if (message.isController() && message.getControllerNumber() == 64)
-        {
-            // Sustain pedal (CC 64)
-            handleSustainPedal(message.getControllerValue() >= 64);
-        }
-        else
-        {
-            // Pass through other MIDI messages (pitch bend, CC, etc.)
-            processedMidi.addEvent(message, metadata.samplePosition);
-        }
+        processBlockStreaming(buffer, midiMessages);
     }
+    else
+    {
+        // Original RAM-based processing
+        juce::MidiBuffer processedMidi;
 
-    // Render audio (note on/off already handled above)
-    sampler.renderNextBlock(buffer, processedMidi, 0, buffer.getNumSamples());
+        for (const auto metadata : midiMessages)
+        {
+            auto message = metadata.getMessage();
+
+            if (message.isNoteOn())
+            {
+                handleNoteOn(message.getChannel(), message.getNoteNumber(),
+                            message.getFloatVelocity());
+            }
+            else if (message.isNoteOff())
+            {
+                handleNoteOff(message.getChannel(), message.getNoteNumber(),
+                             message.getFloatVelocity());
+            }
+            else if (message.isController() && message.getControllerNumber() == 64)
+            {
+                // Sustain pedal (CC 64)
+                handleSustainPedal(message.getControllerValue() >= 64);
+            }
+            else
+            {
+                // Pass through other MIDI messages (pitch bend, CC, etc.)
+                processedMidi.addEvent(message, metadata.samplePosition);
+            }
+        }
+
+        // Render audio (note on/off already handled above)
+        sampler.renderNextBlock(buffer, processedMidi, 0, buffer.getNumSamples());
+    }
 
     // Apply gain
     float gain = gainParam->load();
@@ -315,6 +359,18 @@ void SuperSimpleSamplerProcessor::rebuildSampler()
             sampler.addSound(new SampleZoneSound(zone));
         }
     }
+
+    debugLog("=== Sampler rebuilt: " + juce::String(sampler.getNumSounds()) + " sounds loaded ===");
+    for (int i = 0; i < sampler.getNumSounds(); ++i)
+    {
+        if (auto* sound = dynamic_cast<SampleZoneSound*>(sampler.getSound(i).get()))
+        {
+            const auto& z = sound->getZone();
+            debugLog("  [" + juce::String(i) + "] " + z.name
+                     + " note:" + juce::String(z.lowNote) + "-" + juce::String(z.highNote)
+                     + " vel:" + juce::String(z.lowVelocity) + "-" + juce::String(z.highVelocity));
+        }
+    }
 }
 
 void SuperSimpleSamplerProcessor::notifyListeners()
@@ -355,8 +411,16 @@ void SuperSimpleSamplerProcessor::handleNoteOn(int midiChannel, int midiNote, fl
 
     // Per-note round-robin (like SFZ seq_position)
     int& rrCounter = roundRobinCounters[midiNote];
-    int rrIndex = rrCounter % static_cast<int>(matchingZones.size());
+    int numMatches = static_cast<int>(matchingZones.size());
+    int rrIndex = rrCounter % numMatches;
     int selectedIndex = matchingZones[static_cast<size_t>(rrIndex)];
+
+    debugLog("Note " + juce::String(midiNote) + " vel " + juce::String(intVelocity)
+             + " | matches=" + juce::String(numMatches)
+             + " | rrCounter=" + juce::String(rrCounter)
+             + " | rrIndex=" + juce::String(rrIndex)
+             + " | selectedIdx=" + juce::String(selectedIndex));
+
     rrCounter++;
 
     auto* selectedSound = sampler.getSound(selectedIndex).get();
@@ -364,7 +428,8 @@ void SuperSimpleSamplerProcessor::handleNoteOn(int midiChannel, int midiNote, fl
     // Store last played sample name for debug display
     if (auto* zoneSound = dynamic_cast<SampleZoneSound*>(selectedSound))
     {
-        lastPlayedSample = zoneSound->getZone().name + " (RR" + juce::String(rrIndex + 1) + "/" + juce::String(matchingZones.size()) + ")";
+        lastPlayedSample = zoneSound->getZone().name + " (RR" + juce::String(rrIndex + 1) + "/" + juce::String(numMatches) + ")";
+        debugLog("  -> Playing: " + lastPlayedSample);
     }
 
     // Get current polyphony setting
@@ -428,4 +493,289 @@ void SuperSimpleSamplerProcessor::handleSustainPedal(bool isDown)
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new SuperSimpleSamplerProcessor();
+}
+
+// ==================== Streaming Mode Implementation ====================
+
+void SuperSimpleSamplerProcessor::setStreamingEnabled(bool enabled)
+{
+    if (streamingEnabled == enabled)
+        return;
+
+    streamingEnabled = enabled;
+
+    if (enabled)
+    {
+        // Start the disk streaming thread
+        if (diskStreamer != nullptr)
+        {
+            diskStreamer->startThread();
+        }
+    }
+    else
+    {
+        // Stop the disk streaming thread and reset all streaming voices
+        if (diskStreamer != nullptr)
+        {
+            diskStreamer->stopThread();
+        }
+
+        for (auto& voice : streamingVoices)
+        {
+            voice.reset();
+        }
+    }
+}
+
+void SuperSimpleSamplerProcessor::loadInstrumentStreaming(const juce::File& definitionFile)
+{
+    // Clear existing preloaded samples
+    preloadedSamples.clear();
+
+    // Reset round-robin counters
+    roundRobinCounters.clear();
+
+    auto xml = juce::XmlDocument::parse(definitionFile);
+    if (xml == nullptr || !xml->hasTagName("SuperSimpleSampler"))
+    {
+        notifyListeners();
+        return;
+    }
+
+    // Store instrument info
+    currentInstrument.info.definitionFile = definitionFile;
+    currentInstrument.info.folder = definitionFile.getParentDirectory();
+
+    // Parse meta
+    if (auto* meta = xml->getChildByName("meta"))
+    {
+        if (auto* nameElem = meta->getChildByName("name"))
+            currentInstrument.info.name = nameElem->getAllSubText().trim();
+        if (auto* authorElem = meta->getChildByName("author"))
+            currentInstrument.info.author = authorElem->getAllSubText().trim();
+    }
+
+    // Parse samples - load as preloaded samples (partial load)
+    if (auto* samples = xml->getChildByName("samples"))
+    {
+        for (auto* sampleElem : samples->getChildIterator())
+        {
+            if (sampleElem->hasTagName("sample"))
+            {
+                PreloadedSample sample;
+
+                // Get file path
+                auto filePath = sampleElem->getStringAttribute("file");
+                auto sampleFile = currentInstrument.info.folder.getChildFile(filePath);
+
+                if (!loadPreloadedSample(sampleFile, sample))
+                    continue;
+
+                // Parse mapping attributes
+                sample.rootNote = sampleElem->getIntAttribute("rootNote", 60);
+                sample.lowNote = sampleElem->getIntAttribute("loNote", 0);
+                sample.highNote = sampleElem->getIntAttribute("hiNote", 127);
+                sample.lowVelocity = sampleElem->getIntAttribute("loVel", 1);
+                sample.highVelocity = sampleElem->getIntAttribute("hiVel", 127);
+
+                preloadedSamples.push_back(std::move(sample));
+            }
+        }
+    }
+
+    if (!preloadedSamples.empty())
+    {
+        selectedZoneIndex = 0;
+    }
+    else
+    {
+        selectedZoneIndex = -1;
+    }
+
+    debugLog("=== Streaming mode: " + juce::String(preloadedSamples.size()) + " preloaded samples ===");
+    for (size_t i = 0; i < preloadedSamples.size(); ++i)
+    {
+        const auto& s = preloadedSamples[i];
+        debugLog("  [" + juce::String(i) + "] " + s.name
+                 + " total:" + juce::String(s.totalSampleFrames) + " frames"
+                 + " preload:" + juce::String(s.preloadSizeFrames) + " frames"
+                 + " streaming:" + (s.needsStreaming() ? "YES" : "no"));
+    }
+
+    notifyListeners();
+}
+
+bool SuperSimpleSamplerProcessor::loadPreloadedSample(const juce::File& sampleFile, PreloadedSample& sample)
+{
+    if (!sampleFile.existsAsFile())
+        return false;
+
+    std::unique_ptr<juce::AudioFormatReader> reader(
+        streamingFormatManager.createReaderFor(sampleFile));
+
+    if (reader == nullptr)
+        return false;
+
+    // Store file metadata
+    sample.filePath = sampleFile.getFullPathName();
+    sample.sampleRate = reader->sampleRate;
+    sample.numChannels = static_cast<int>(reader->numChannels);
+    sample.totalSampleFrames = static_cast<int64_t>(reader->lengthInSamples);
+    sample.name = sampleFile.getFileNameWithoutExtension();
+
+    // Calculate preload size in frames
+    // 64KB / (channels * bytes per sample)
+    int bytesPerSample = 4;  // 32-bit float
+    sample.preloadSizeFrames = PreloadedSample::preloadSizeBytes /
+                               (sample.numChannels * bytesPerSample);
+
+    // Cap preload to total sample length
+    int framesToPreload = std::min(sample.preloadSizeFrames,
+                                    static_cast<int>(sample.totalSampleFrames));
+
+    // Load the preload buffer
+    sample.preloadBuffer.setSize(sample.numChannels, framesToPreload);
+    reader->read(&sample.preloadBuffer, 0, framesToPreload, 0, true, true);
+
+    return sample.preloadBuffer.getNumSamples() > 0;
+}
+
+const PreloadedSample* SuperSimpleSamplerProcessor::getPreloadedSample(int index) const
+{
+    if (index >= 0 && index < static_cast<int>(preloadedSamples.size()))
+        return &preloadedSamples[static_cast<size_t>(index)];
+    return nullptr;
+}
+
+std::vector<int> SuperSimpleSamplerProcessor::findMatchingPreloadedSamples(int midiNote, int velocity)
+{
+    std::vector<int> matches;
+
+    for (int i = 0; i < static_cast<int>(preloadedSamples.size()); ++i)
+    {
+        if (preloadedSamples[static_cast<size_t>(i)].matches(midiNote, velocity))
+        {
+            matches.push_back(i);
+        }
+    }
+
+    return matches;
+}
+
+void SuperSimpleSamplerProcessor::processBlockStreaming(juce::AudioBuffer<float>& buffer,
+                                                         juce::MidiBuffer& midiMessages)
+{
+    // Update ADSR for all streaming voices
+    juce::ADSR::Parameters adsrParams;
+    adsrParams.attack = attackParam->load();
+    adsrParams.decay = decayParam->load();
+    adsrParams.sustain = sustainParam->load();
+    adsrParams.release = releaseParam->load();
+
+    for (auto& voice : streamingVoices)
+    {
+        voice.setADSRParameters(adsrParams);
+    }
+
+    // Process MIDI messages
+    for (const auto metadata : midiMessages)
+    {
+        auto message = metadata.getMessage();
+
+        if (message.isNoteOn())
+        {
+            handleNoteOnStreaming(message.getChannel(), message.getNoteNumber(),
+                                   message.getFloatVelocity());
+        }
+        else if (message.isNoteOff())
+        {
+            handleNoteOffStreaming(message.getChannel(), message.getNoteNumber(),
+                                    message.getFloatVelocity());
+        }
+        else if (message.isController() && message.getControllerNumber() == 64)
+        {
+            // Sustain pedal
+            bool isDown = message.getControllerValue() >= 64;
+            sustainPedalDown = isDown;
+
+            if (!isDown)
+            {
+                for (auto& voice : streamingVoices)
+                {
+                    voice.setSustainPedal(false);
+                }
+            }
+        }
+    }
+
+    // Render all active streaming voices
+    const int numSamples = buffer.getNumSamples();
+
+    for (auto& voice : streamingVoices)
+    {
+        if (voice.isActive())
+        {
+            voice.renderNextBlock(buffer, 0, numSamples);
+        }
+    }
+}
+
+void SuperSimpleSamplerProcessor::handleNoteOnStreaming(int midiChannel, int midiNote, float velocity)
+{
+    juce::ignoreUnused(midiChannel);
+
+    int intVelocity = static_cast<int>(velocity * 127.0f);
+
+    // Find matching preloaded samples
+    auto matchingSamples = findMatchingPreloadedSamples(midiNote, intVelocity);
+
+    if (matchingSamples.empty())
+        return;
+
+    // Per-note round-robin
+    int& rrCounter = roundRobinCounters[midiNote];
+    int numMatches = static_cast<int>(matchingSamples.size());
+    int rrIndex = rrCounter % numMatches;
+    int selectedIndex = matchingSamples[static_cast<size_t>(rrIndex)];
+
+    rrCounter++;
+
+    const PreloadedSample* selectedSample = &preloadedSamples[static_cast<size_t>(selectedIndex)];
+
+    // Store last played sample name for debug
+    lastPlayedSample = selectedSample->name + " (RR" + juce::String(rrIndex + 1) + "/" + juce::String(numMatches) + ")";
+    debugLog("Streaming note " + juce::String(midiNote) + " -> " + lastPlayedSample);
+
+    // Get current polyphony setting
+    int maxVoices = static_cast<int>(polyphonyParam->load());
+    maxVoices = std::min(maxVoices, StreamingConstants::maxStreamingVoices);
+
+    // Find a free streaming voice
+    for (int i = 0; i < maxVoices; ++i)
+    {
+        if (!streamingVoices[static_cast<size_t>(i)].isActive())
+        {
+            streamingVoices[static_cast<size_t>(i)].startVoice(
+                selectedSample, midiNote, velocity, getSampleRate());
+            return;
+        }
+    }
+
+    // No free voice - steal the first one
+    streamingVoices[0].stopVoice(false);
+    streamingVoices[0].startVoice(selectedSample, midiNote, velocity, getSampleRate());
+}
+
+void SuperSimpleSamplerProcessor::handleNoteOffStreaming(int midiChannel, int midiNote, float velocity)
+{
+    juce::ignoreUnused(midiChannel, velocity);
+
+    // Release all streaming voices playing this note
+    for (auto& voice : streamingVoices)
+    {
+        if (voice.isActive() && voice.getPlayingNote() == midiNote)
+        {
+            voice.noteReleasedWithPedal(sustainPedalDown);
+        }
+    }
 }

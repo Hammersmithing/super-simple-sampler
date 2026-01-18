@@ -3,8 +3,12 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <map>
+#include <array>
 #include "SampleZone.h"
 #include "InstrumentLoader.h"
+#include "DiskStreaming.h"
+#include "StreamingVoice.h"
+#include "DiskStreamer.h"
 
 class SuperSimpleSamplerProcessor : public juce::AudioProcessor
 {
@@ -59,6 +63,15 @@ public:
     // Round-robin debug info
     juce::String getLastPlayedSample() const { return lastPlayedSample; }
 
+    // Streaming mode controls
+    bool isStreamingEnabled() const { return streamingEnabled; }
+    void setStreamingEnabled(bool enabled);
+    void loadInstrumentStreaming(const juce::File& definitionFile);
+
+    // Get preloaded sample info (for streaming mode)
+    const PreloadedSample* getPreloadedSample(int index) const;
+    int getNumPreloadedSamples() const { return static_cast<int>(preloadedSamples.size()); }
+
     juce::AudioProcessorValueTreeState& getParameters() { return parameters; }
 
     // Listener for UI updates
@@ -108,6 +121,30 @@ private:
 
     // Sustain pedal state
     bool sustainPedalDown = false;
+
+    // ==================== Streaming Mode ====================
+    bool streamingEnabled = false;
+
+    // Streaming voices (used when streamingEnabled is true)
+    std::array<StreamingVoice, StreamingConstants::maxStreamingVoices> streamingVoices;
+
+    // Background disk streaming thread
+    std::unique_ptr<DiskStreamer> diskStreamer;
+
+    // Preloaded samples for streaming mode (replaces full audio data with partial preload)
+    std::vector<PreloadedSample> preloadedSamples;
+
+    // Audio format manager for streaming (shared with DiskStreamer)
+    juce::AudioFormatManager streamingFormatManager;
+
+    // Streaming-specific processing
+    void processBlockStreaming(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages);
+    void handleNoteOnStreaming(int midiChannel, int midiNote, float velocity);
+    void handleNoteOffStreaming(int midiChannel, int midiNote, float velocity);
+
+    // Load a sample with only preload data (for streaming mode)
+    bool loadPreloadedSample(const juce::File& sampleFile, PreloadedSample& sample);
+    std::vector<int> findMatchingPreloadedSamples(int midiNote, int velocity);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SuperSimpleSamplerProcessor)
 };

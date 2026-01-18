@@ -27,6 +27,8 @@ target_sources(SuperSimpleSampler
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
         Source/InstrumentLoader.cpp
+        Source/StreamingVoice.cpp
+        Source/DiskStreamer.cpp
 )
 
 target_compile_definitions(SuperSimpleSampler

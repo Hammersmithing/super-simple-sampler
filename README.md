@@ -16,6 +16,7 @@ A sampler VST3/AU plugin built with JUCE, inspired by Decent Sampler and Native 
 - **Instrument browser** - scans `~/Documents/Super Simple Sampler/Instruments/`
 - **Waveform display** for selected samples
 - **Python build tool** - auto-generates instrument.sss from sample folders
+- **DFD (Direct From Disk) Streaming** - load 100GB+ libraries without running out of RAM
 
 ## Sample Naming Convention
 
@@ -137,6 +138,77 @@ Options:
 | Gain | 0 - 200% | Output gain |
 | Voices | 1 - 64 | Maximum polyphony |
 
+## DFD (Direct From Disk) Streaming
+
+The DFD streaming system allows loading large sample libraries (100GB+) that would otherwise exceed available RAM.
+
+### How It Works
+
+1. **Preload**: Only the first 64KB of each sample is loaded into RAM
+2. **Ring Buffer**: Each voice has a 32KB ring buffer (~743ms at 44.1kHz)
+3. **Background Thread**: A dedicated disk thread fills ring buffers as voices play
+4. **Lock-Free**: Audio thread and disk thread communicate via atomic operations
+
+### Architecture
+
+```
+Audio Thread                         Disk Thread
+     |                                    |
+     | 1. Check samplesAvailable()        |
+     | 2. If low: needsData = true        |
+     |                                    |
+     |                              3. Poll needsData
+     |                              4. Read disk -> ring buffer
+     |                              5. writePosition += frames
+     |                                    |
+     | 6. Read ring buffer                |
+     | 7. readPosition += frames          |
+```
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `Source/DiskStreaming.h` | Core types: `PreloadedSample`, `StreamRequest`, constants |
+| `Source/StreamingVoice.h/cpp` | Streaming voice with ring buffer and lock-free positions |
+| `Source/DiskStreamer.h/cpp` | Background disk read thread |
+
+### Configuration Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `preloadSizeBytes` | 64KB | Initial sample data loaded to RAM |
+| `ringBufferFrames` | 32768 | Ring buffer size (~743ms at 44.1kHz) |
+| `lowWatermarkFrames` | 8192 | Request data when buffer falls below this (~185ms) |
+| `diskReadFrames` | 4096 | Batch read size per disk operation (~93ms) |
+| `diskThreadPollMs` | 5 | Disk thread polling interval |
+| `maxStreamingVoices` | 64 | Maximum concurrent streaming voices |
+
+### Memory Usage Comparison
+
+| Mode | 100 samples @ 10s stereo 44.1kHz |
+|------|-----------------------------------|
+| RAM mode | ~336 MB |
+| Streaming mode | ~6.4 MB (preloads only) |
+
+### Enabling Streaming
+
+```cpp
+// In your code
+processor.setStreamingEnabled(true);
+processor.loadInstrumentStreaming(instrumentFile);
+```
+
+### Error Handling
+
+- **Buffer Underrun**: Quick 64-sample fade out to avoid clicks
+- **End of Sample**: Automatic transition to release envelope
+- **File Read Errors**: Voice deactivated, error logged
+
+### SSD Recommended
+
+DFD streaming works best with SSDs. On HDDs, reduce polyphony to avoid underruns during heavy playback.
+
 ## Design Philosophy
 
 Inspired by Decent Sampler's approach:
@@ -155,7 +227,7 @@ Inspired by Decent Sampler's approach:
 - [x] Sustain pedal support
 - [ ] Key/velocity crossfades
 - [ ] Multiple sample formats (WAV, AIFF, FLAC, MP3)
-- [ ] Streaming from disk for large libraries
+- [x] Streaming from disk for large libraries (DFD)
 - [ ] Sample start/end, loop points with crossfade
 
 ### Sound Shaping

@@ -295,9 +295,15 @@ SuperSimpleSamplerEditor::~SuperSimpleSamplerEditor()
 
 void SuperSimpleSamplerEditor::timerCallback()
 {
+    // Update the author label with last played info for debugging
     auto lastPlayed = processorRef.getLastPlayedSample();
-    if (lastPlayed.isNotEmpty())
-        lastPlayedLabel.setText("Last: " + lastPlayed, juce::dontSendNotification);
+    if (lastPlayed.isNotEmpty() && processorRef.hasInstrumentLoaded())
+    {
+        const auto& instrument = processorRef.getCurrentInstrument();
+        juce::String info = "by " + instrument.info.author;
+        info += " (" + juce::String(instrument.zones.size()) + " samples) - " + lastPlayed;
+        instrumentAuthorLabel.setText(info, juce::dontSendNotification);
+    }
 }
 
 void SuperSimpleSamplerEditor::paint(juce::Graphics& g)
