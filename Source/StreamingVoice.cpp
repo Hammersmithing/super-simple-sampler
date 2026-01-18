@@ -1,5 +1,14 @@
 #include "StreamingVoice.h"
 
+// Debug logging to file
+static void voiceDebugLog(const juce::String& msg)
+{
+    auto logFile = juce::File::getSpecialLocation(juce::File::userDesktopDirectory)
+                       .getChildFile("sampler_streaming_debug.txt");
+    auto timestamp = juce::Time::getCurrentTime().toString(true, true, true, true);
+    logFile.appendText("[" + timestamp + "] " + msg + "\n");
+}
+
 StreamingVoice::StreamingVoice()
 {
     // Allocate ring buffer for stereo audio
@@ -75,6 +84,13 @@ void StreamingVoice::startVoice(const PreloadedSample* sample, int midiNote, flo
 
     // Mark voice as active last (ensures all state is visible to disk thread)
     active.store(true, std::memory_order_release);
+
+    voiceDebugLog("StreamingVoice::startVoice - note=" + juce::String(midiNote)
+                 + " sample=" + sample->name
+                 + " totalFrames=" + juce::String(sample->totalSampleFrames)
+                 + " preloadFrames=" + juce::String(sample->preloadSizeFrames)
+                 + " needsStreaming=" + juce::String(sample->needsStreaming() ? "YES" : "no")
+                 + " pitchRatio=" + juce::String(pitchRatio, 4));
 }
 
 void StreamingVoice::stopVoice(bool allowTailOff)
@@ -286,5 +302,17 @@ void StreamingVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer, int
     {
         readPosition.store(static_cast<int64_t>(sourceSamplePosition), std::memory_order_release);
         checkAndRequestData();
+
+        // Periodic debug logging of ring buffer state
+        static int debugBlockCounter = 0;
+        if (++debugBlockCounter % 100 == 0)  // Every ~2 seconds at 512 samples/block
+        {
+            voiceDebugLog("Voice render: readPos=" + juce::String(readPosition.load())
+                         + " writePos=" + juce::String(writePosition.load())
+                         + " available=" + juce::String(samplesAvailable())
+                         + " sourcePos=" + juce::String(static_cast<int64_t>(sourceSamplePosition))
+                         + " / " + juce::String(totalSourceFrames)
+                         + " needsData=" + juce::String(needsData.load() ? "yes" : "no"));
+        }
     }
 }

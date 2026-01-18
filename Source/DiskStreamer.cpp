@@ -1,5 +1,14 @@
 #include "DiskStreamer.h"
 
+// Debug logging to file (same as PluginProcessor)
+static void streamDebugLog(const juce::String& msg)
+{
+    auto logFile = juce::File::getSpecialLocation(juce::File::userDesktopDirectory)
+                       .getChildFile("sampler_streaming_debug.txt");
+    auto timestamp = juce::Time::getCurrentTime().toString(true, true, true, true);
+    logFile.appendText("[" + timestamp + "] " + msg + "\n");
+}
+
 DiskStreamer::DiskStreamer()
     : juce::Thread("DiskStreamer")
 {
@@ -51,8 +60,15 @@ void DiskStreamer::unregisterVoice(int voiceIndex)
 
 void DiskStreamer::run()
 {
+    streamDebugLog(">>> DiskStreamer thread STARTED");
+    int loopCount = 0;
+    int lastActiveVoices = 0;
+
     while (!threadShouldExit())
     {
+        loopCount++;
+        int activeVoices = 0;
+
         // Poll all registered voices
         for (int i = 0; i < StreamingConstants::maxStreamingVoices; ++i)
         {
@@ -60,15 +76,34 @@ void DiskStreamer::run()
                 break;
 
             StreamingVoice* voice = voices[static_cast<size_t>(i)].load(std::memory_order_acquire);
-            if (voice != nullptr && voice->isActive() && voice->needsMoreData())
+            if (voice != nullptr && voice->isActive())
             {
-                fillVoiceBuffer(i);
+                activeVoices++;
+                if (voice->needsMoreData())
+                {
+                    fillVoiceBuffer(i);
+                }
             }
+        }
+
+        // Log heartbeat and voice count changes
+        if (loopCount % 200 == 0)  // Every ~1 second at 5ms polling
+        {
+            streamDebugLog("DiskStreamer heartbeat: loop=" + juce::String(loopCount)
+                          + " activeVoices=" + juce::String(activeVoices));
+        }
+        else if (activeVoices != lastActiveVoices)
+        {
+            streamDebugLog("DiskStreamer: activeVoices changed " + juce::String(lastActiveVoices)
+                          + " -> " + juce::String(activeVoices));
+            lastActiveVoices = activeVoices;
         }
 
         // Wait before polling again (but can be woken early)
         wait(StreamingConstants::diskThreadPollMs);
     }
+
+    streamDebugLog(">>> DiskStreamer thread STOPPED");
 }
 
 void DiskStreamer::fillVoiceBuffer(int voiceIndex)
@@ -80,6 +115,8 @@ void DiskStreamer::fillVoiceBuffer(int voiceIndex)
     const PreloadedSample* sample = voice->getCurrentSample();
     if (sample == nullptr || !sample->isValid())
         return;
+
+    streamDebugLog("fillVoiceBuffer[" + juce::String(voiceIndex) + "] ENTER - sample=" + sample->name);
 
     // Check if we need to open or reopen the file reader
     auto& reader = readers[static_cast<size_t>(voiceIndex)];
@@ -118,6 +155,7 @@ void DiskStreamer::fillVoiceBuffer(int voiceIndex)
     }
 
     // Fill the buffer in chunks
+    int totalFramesFilled = 0;
     while (space >= StreamingConstants::diskReadFrames && filePos < totalFrames && !threadShouldExit())
     {
         int framesToRead = static_cast<int>(std::min(static_cast<int64_t>(StreamingConstants::diskReadFrames),
@@ -174,6 +212,7 @@ void DiskStreamer::fillVoiceBuffer(int voiceIndex)
         voice->advanceWritePosition(framesToRead);
         filePos += framesToRead;
         voice->setFileReadPosition(filePos);
+        totalFramesFilled += framesToRead;
 
         space = voice->spaceAvailable();
     }
@@ -183,6 +222,11 @@ void DiskStreamer::fillVoiceBuffer(int voiceIndex)
     {
         voice->setEndOfFile(true);
     }
+
+    streamDebugLog("fillVoiceBuffer[" + juce::String(voiceIndex) + "] EXIT - filled "
+                  + juce::String(totalFramesFilled) + " frames, filePos="
+                  + juce::String(filePos) + "/" + juce::String(totalFrames)
+                  + " EOF=" + juce::String(voice->hasReachedEndOfFile() ? "yes" : "no"));
 
     // Clear the needs data flag
     voice->clearNeedsData();

@@ -499,6 +499,8 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 
 void SuperSimpleSamplerProcessor::setStreamingEnabled(bool enabled)
 {
+    debugLog(">>> setStreamingEnabled(" + juce::String(enabled ? "true" : "false") + ")");
+
     if (streamingEnabled == enabled)
         return;
 
@@ -506,6 +508,7 @@ void SuperSimpleSamplerProcessor::setStreamingEnabled(bool enabled)
 
     if (enabled)
     {
+        debugLog("Starting disk streaming thread...");
         // Start the disk streaming thread
         if (diskStreamer != nullptr)
         {
@@ -514,6 +517,7 @@ void SuperSimpleSamplerProcessor::setStreamingEnabled(bool enabled)
     }
     else
     {
+        debugLog("Stopping disk streaming thread...");
         // Stop the disk streaming thread and reset all streaming voices
         if (diskStreamer != nullptr)
         {
@@ -592,15 +596,28 @@ void SuperSimpleSamplerProcessor::loadInstrumentStreaming(const juce::File& defi
         selectedZoneIndex = -1;
     }
 
-    debugLog("=== Streaming mode: " + juce::String(preloadedSamples.size()) + " preloaded samples ===");
-    for (size_t i = 0; i < preloadedSamples.size(); ++i)
+    // Calculate and log memory usage summary
+    size_t totalPreloadBytes = 0;
+    size_t totalFullSampleBytes = 0;
+    int streamingSamples = 0;
+
+    for (const auto& s : preloadedSamples)
     {
-        const auto& s = preloadedSamples[i];
-        debugLog("  [" + juce::String(i) + "] " + s.name
-                 + " total:" + juce::String(s.totalSampleFrames) + " frames"
-                 + " preload:" + juce::String(s.preloadSizeFrames) + " frames"
-                 + " streaming:" + (s.needsStreaming() ? "YES" : "no"));
+        totalPreloadBytes += static_cast<size_t>(s.preloadBuffer.getNumSamples() * s.numChannels * sizeof(float));
+        totalFullSampleBytes += static_cast<size_t>(s.totalSampleFrames * s.numChannels * sizeof(float));
+        if (s.needsStreaming())
+            streamingSamples++;
     }
+
+    debugLog("=== STREAMING MODE SUMMARY ===");
+    debugLog("  Total samples: " + juce::String(preloadedSamples.size()));
+    debugLog("  Samples needing streaming: " + juce::String(streamingSamples));
+    debugLog("  Preload memory: " + juce::String(totalPreloadBytes / 1024) + " KB ("
+             + juce::String(totalPreloadBytes / (1024 * 1024)) + " MB)");
+    debugLog("  Full sample memory (if RAM mode): " + juce::String(totalFullSampleBytes / 1024) + " KB ("
+             + juce::String(totalFullSampleBytes / (1024 * 1024)) + " MB)");
+    debugLog("  Memory savings: " + juce::String((totalFullSampleBytes - totalPreloadBytes) / (1024 * 1024)) + " MB");
+    debugLog("==============================");
 
     notifyListeners();
 }
@@ -636,6 +653,17 @@ bool SuperSimpleSamplerProcessor::loadPreloadedSample(const juce::File& sampleFi
     // Load the preload buffer
     sample.preloadBuffer.setSize(sample.numChannels, framesToPreload);
     reader->read(&sample.preloadBuffer, 0, framesToPreload, 0, true, true);
+
+    // Detailed logging
+    int preloadBytes = sample.preloadBuffer.getNumSamples() * sample.numChannels * bytesPerSample;
+    double durationSec = static_cast<double>(sample.totalSampleFrames) / sample.sampleRate;
+    debugLog("Loaded preload: " + sample.name
+             + " | totalFrames=" + juce::String(sample.totalSampleFrames)
+             + " (" + juce::String(durationSec, 2) + "s)"
+             + " | preloadFrames=" + juce::String(framesToPreload)
+             + " | preloadBytes=" + juce::String(preloadBytes)
+             + " | channels=" + juce::String(sample.numChannels)
+             + " | needsStreaming=" + juce::String(sample.needsStreaming() ? "YES" : "no"));
 
     return sample.preloadBuffer.getNumSamples() > 0;
 }
